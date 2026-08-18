@@ -8,7 +8,8 @@ import plotly.express as px
 import google.generativeai as genai
 
 from docx import Document
-from docx.shared import Inches
+from docx.shared import Inches, Cm
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docxtpl import DocxTemplate
 
 # ReportLab para generación directa de PDF en servidores Linux / Cloud
@@ -16,7 +17,6 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
 
 # ==========================================
 # CONFIGURACIÓN DE CLOUDINARY (UNSIGNED)
@@ -96,7 +96,7 @@ st.markdown("""
         }
 
         div[data-baseweb="popover"], div[role="listbox"], ul[role="listbox"] li {
-            background-color: #FFFFFF !important;   
+            background-color: #FFFFFF !important;
             color: #1E232A !important;
         }
         
@@ -271,7 +271,7 @@ def analizar_causa_con_gemini(causa_texto):
 
 def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
     """
-    Rellena la plantilla Word conservando el diseño original.
+    Rellena la plantilla Word conservando el diseño original y ajustando el tamaño de las fotos.
     """
     if os.path.exists(PLANTILLA_FILE):
         doc = DocxTemplate(PLANTILLA_FILE)
@@ -297,10 +297,17 @@ def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
 
         if fotos_subidas:
             doc_fotos = Document(ruta_salida_docx)
-            doc_fotos.add_heading("Fotos Adjuntas", level=2)
+            heading = doc_fotos.add_heading("Evidencia Fotográfica", level=2)
+            heading.paragraph_format.space_before = Cm(1)
+            heading.paragraph_format.space_after = Cm(0.5)
+
             for foto in fotos_subidas:
                 foto.seek(0)
-                doc_fotos.add_picture(foto, width=Inches(4.5))
+                p = doc_fotos.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_after = Cm(0.5)
+                run = p.add_run()
+                run.add_picture(foto, width=Cm(14))  # Ancho ajustado a 14 cm para no desbordar
             doc_fotos.save(ruta_salida_docx)
     else:
         doc = Document()
@@ -308,15 +315,18 @@ def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
         for k, v in datos_dict.items():
             doc.add_paragraph(f"{k}: {v}")
         if fotos_subidas:
-            doc.add_heading("Fotos Adjuntas", level=2)
+            doc.add_heading("Evidencia Fotográfica", level=2)
             for foto in fotos_subidas:
                 foto.seek(0)
-                doc.add_picture(foto, width=Inches(4.5))
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run()
+                run.add_picture(foto, width=Cm(14))
         doc.save(ruta_salida_docx)
 
 def generar_pdf_reportlab(datos_dict, fotos_subidas, ruta_pdf):
     """
-    Genera un PDF profesional utilizando ReportLab, totalmente formateado e incluyendo imágenes.
+    Genera un PDF profesional utilizando ReportLab, ajustando proporciones e imágenes.
     """
     try:
         doc = SimpleDocTemplate(
@@ -385,11 +395,11 @@ def generar_pdf_reportlab(datos_dict, fotos_subidas, ruta_pdf):
             elements.append(Paragraph(str(contenido) if contenido else "N/A", value_style))
             elements.append(Spacer(1, 6))
 
-        # 4. Fotos Adjuntas al Final del PDF
+        # 4. Fotos Adjuntas al Final del PDF con tamaño máximo controlado
         if fotos_subidas:
             elements.append(Spacer(1, 10))
             elements.append(Paragraph("Evidencia Fotográfica", sec_style))
-            elements.append(Spacer(1, 4))
+            elements.append(Spacer(1, 6))
             
             for i, foto in enumerate(fotos_subidas):
                 try:
@@ -399,8 +409,8 @@ def generar_pdf_reportlab(datos_dict, fotos_subidas, ruta_pdf):
                         f_temp.write(foto.read())
                     
                     img = RLImage(temp_img_path)
-                    max_width = 6.5 * inch
-                    max_height = 3.5 * inch
+                    max_width = 390.0  # Ancho proporcional en puntos ReportLab
+                    max_height = 250.0
 
                     aspect = img.imageWidth / float(img.imageHeight)
                     if aspect > 1:
@@ -410,14 +420,15 @@ def generar_pdf_reportlab(datos_dict, fotos_subidas, ruta_pdf):
                         img.drawHeight = min(max_height, img.imageHeight)
                         img.drawWidth = img.drawHeight * aspect
 
+                    img.hAlign = 'CENTER'
                     elements.append(img)
-                    elements.append(Spacer(1, 8))
+                    elements.append(Spacer(1, 10))
                 except Exception as e_img:
                     elements.append(Paragraph(f"Error adjuntando foto: {e_img}", value_style))
 
         doc.build(elements)
 
-        # Limpieza de archivos temporales de imagen creados para el PDF
+        # Limpieza de archivos temporales
         if fotos_subidas:
             for i in range(len(fotos_subidas)):
                 temp_img_path = f"temp_pdf_img_{i}.png"
@@ -817,7 +828,7 @@ elif opcion == "⏳ Trabajos Pendientes":
             st.info("ℹ️ Aún no existen trabajos completados en el historial.")
 
 # ==========================================
-# SECCIÓN 3: PANEL DE ESTADÍSTICAS REESTRUCTURADO
+# SECCIÓN 3: PANEL DE ESTADÍSTICAS
 # ==========================================
 elif opcion == "📊 Panel de Estadísticas":
     st.markdown("<h1 style='color: #A61C1C;'>📊 Panel de Estadísticas e Indicadores</h1>", unsafe_allow_html=True)
@@ -826,7 +837,6 @@ elif opcion == "📊 Panel de Estadísticas":
     if os.path.exists(EXCEL_FILE):
         df = pd.read_excel(EXCEL_FILE)
         if not df.empty:
-            # Resumen general rápido
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Total Órdenes", len(df))
             c2.metric("Pendientes", len(df[df["Estado"] == "PENDIENTE"]) if "Estado" in df.columns else 0)
@@ -841,9 +851,6 @@ elif opcion == "📊 Panel de Estadísticas":
                 "🛠️ 3. Mantenimientos Realizados"
             ])
 
-            # -------------------------------------------------------------
-            # SUBTAB 1: PROBLEMAS POR CADA MÁQUINA Y SU FRECUENCIA
-            # -------------------------------------------------------------
             with tab_est1:
                 st.subheader("Análisis Individual por Máquina / Equipo")
                 maquinas_list = ["Todas"] + sorted(list(df["Maquina"].dropna().unique()))
@@ -873,9 +880,6 @@ elif opcion == "📊 Panel de Estadísticas":
                 else:
                     st.info("No hay registros para la máquina seleccionada.")
 
-            # -------------------------------------------------------------
-            # SUBTAB 2: PROBLEMAS FRECUENTES EN DISTINTAS MÁQUINAS
-            # -------------------------------------------------------------
             with tab_est2:
                 st.subheader("Ranking Global de Problemas Frecuentes en la Flota")
                 
@@ -900,9 +904,6 @@ elif opcion == "📊 Panel de Estadísticas":
                         fig_cat.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                         st.plotly_chart(fig_cat, use_container_width=True)
 
-            # -------------------------------------------------------------
-            # SUBTAB 3: MANTENIMIENTOS HECHOS Y SU FRECUENCIA
-            # -------------------------------------------------------------
             with tab_est3:
                 st.subheader("Registro de Mantenimientos e Intervenciones")
 
