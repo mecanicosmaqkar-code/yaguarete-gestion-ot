@@ -1,4 +1,5 @@
 import os
+import subprocess
 from datetime import datetime
 import pandas as pd
 import openpyxl
@@ -58,7 +59,7 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
         return None, []
 
 # ==========================================
-# 1. CONFIGURACIÓN Y ESTILO VISUAL
+# 1. CONFIGURACIÓN Y ESTILO VISUAL (CSS CORREGIDO)
 # ==========================================
 st.set_page_config(page_title="Yaguarete Papeles - Gestión OT", layout="wide", page_icon="📋")
 
@@ -66,7 +67,33 @@ st.markdown("""
     <style>
         .stApp, [data-testid="stAppViewContainer"] { background-color: #FFFFFF !important; color: #1E232A !important; }
         label, p, span, div, .stMarkdown { color: #1E232A !important; font-weight: 600 !important; }
-        input, select, textarea, div[role="combobox"] { background-color: #F8F9F9 !important; color: #1E232A !important; border: 1px solid #D5D8DC !important; border-radius: 6px !important; }
+        
+        /* Cajas de texto y selectores */
+        input, select, textarea, div[role="combobox"] { background-color: #FFFFFF !important; color: #1E232A !important; border: 1px solid #D5D8DC !important; border-radius: 6px !important; }
+        
+        /* Corregir menú desplegable emergente (fondo negro) */
+        ul[role="listbox"], [data-baseweb="menu"], [data-baseweb="popover"] {
+            background-color: #FFFFFF !important;
+            color: #1E232A !important;
+        }
+        li[role="option"], [data-baseweb="option"] {
+            background-color: #FFFFFF !important;
+            color: #1E232A !important;
+        }
+        li[role="option"]:hover, [data-baseweb="option"]:hover {
+            background-color: #E5E8E8 !important;
+            color: #A61C1C !important;
+        }
+
+        /* Corregir cuadro de carga de archivos (Fotos) */
+        [data-testid="stFileUploader"] section {
+            background-color: #F8F9F9 !important;
+            border: 2px dashed #A61C1C !important;
+        }
+        [data-testid="stFileUploader"] section * {
+            color: #1E232A !important;
+        }
+
         [data-testid="stSidebar"] { background-color: #F4F6F6 !important; border-right: 2px solid #E5E8E8 !important; }
         h1, h2, h3, .stHeader { color: #A61C1C !important; font-weight: 700 !important; }
         div.stButton > button:first-child { background-color: #A61C1C !important; color: #FFFFFF !important; border-radius: 6px !important; border: none !important; padding: 10px 20px !important; font-weight: 700 !important; }
@@ -107,42 +134,42 @@ if not os.path.exists(EXCEL_FILE):
     df_init.to_excel(EXCEL_FILE, index=False)
 
 def obtener_siguiente_ot():
-    """Calcula dinámicamente el número consecutivo de OT."""
+    """Calcula el número de OT más alto registrado en el Excel y suma 1."""
     if os.path.exists(EXCEL_FILE):
         try:
             df = pd.read_excel(EXCEL_FILE)
             if not df.empty and "Num_OT" in df.columns:
                 numeros = []
-                for ot in df["Num_OT"].dropna().astype(str):
-                    digits = ''.join(filter(str.isdigit, ot))
+                for val in df["Num_OT"].dropna():
+                    val_str = str(val).strip()
+                    digits = ''.join(filter(str.isdigit, val_str))
                     if digits:
                         numeros.append(int(digits))
                 if numeros:
-                    return f"OT-{max(numeros) + 1:05d}"
-        except Exception:
-            pass
+                    siguiente = max(numeros) + 1
+                    return f"OT-{siguiente:05d}"
+        except Exception as e:
+            st.error(f"Error al calcular siguiente OT: {e}")
     return "OT-00001"
 
-def analizar_causa_con_gemini(causa_texto):
-    if not GEMINI_API_KEY:
-        return "Mecánica"
+def convertir_docx_a_pdf(ruta_docx, ruta_pdf):
+    """Convierte el archivo DOCX a PDF usando docx2pdf o libreoffice."""
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"Clasifica esta falla técnica en UNA sola categoría (Mecánica, Eléctrica, Hidráulica, Neumática, Error Operacional, Desgaste Natural, Llantas): '{causa_texto}'"
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        from docx2pdf import convert
+        convert(ruta_docx, ruta_pdf)
+        return True
     except Exception:
-        return "Mecánica"
+        try:
+            subprocess.run(["soffice", "--headless", "--convert-to", "pdf", ruta_docx], check=True)
+            return True
+        except Exception:
+            return False
 
 def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
-    """
-    Rellena directamente los campos Jinja2 de tu plantilla 'plantilla_ot.docx'
-    e incrusta las imágenes dentro del tag {{ fotos }} o al final de la plantilla.
-    """
+    """Rellena la plantilla Word .docx manteniendo el diseño original."""
     if os.path.exists(PLANTILLA_FILE):
         doc = DocxTemplate(PLANTILLA_FILE)
         
-        # Procesar fotos para plantilla
         imagenes_inline = []
         if fotos_subidas:
             for i, foto in enumerate(fotos_subidas):
@@ -150,7 +177,6 @@ def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
                 temp_img_path = f"temp_inline_img_{i}.png"
                 with open(temp_img_path, "wb") as f_temp:
                     f_temp.write(foto.read())
-                # Redimensionar la imagen a 12cm de ancho dentro de la plantilla
                 imagenes_inline.append(InlineImage(doc, temp_img_path, width=Cm(12)))
 
         contexto = {
@@ -175,19 +201,6 @@ def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
         doc.render(contexto)
         doc.save(ruta_salida_docx)
 
-        # Si la plantilla no tenía la etiqueta {{ fotos }}, se agregan centradas al final
-        if fotos_subidas and not imagenes_inline:
-            doc_fotos = Document(ruta_salida_docx)
-            doc_fotos.add_heading("Anexos Fotográficos", level=2)
-            for foto in fotos_subidas:
-                foto.seek(0)
-                p = doc_fotos.add_paragraph()
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run = p.add_run()
-                run.add_picture(foto, width=Cm(12))
-            doc_fotos.save(ruta_salida_docx)
-
-        # Limpiar imágenes temporales
         if fotos_subidas:
             for i in range(len(fotos_subidas)):
                 temp_img_path = f"temp_inline_img_{i}.png"
@@ -286,7 +299,6 @@ if opcion == "📋 Cargar Orden de Servicio":
         if causa_detalle_extra.strip(): partes_causa.append(causa_detalle_extra.strip())
         causa_falla_final = " - ".join(partes_causa) if partes_causa else "N/A"
 
-        categoria_ai = analizar_causa_con_gemini(causa_falla_final)
         fecha_actual_str = datetime.now().strftime("%Y-%m-%d")
         nombre_base_trabajo = f"{tecnico_final}_{fecha_actual_str}_{maquina_final}_{codigo_maq}_{num_ot}"
 
@@ -309,10 +321,15 @@ if opcion == "📋 Cargar Orden de Servicio":
         }
 
         ruta_salida_docx = f"{nombre_base_trabajo}.docx"
+        ruta_salida_pdf = f"{nombre_base_trabajo}.pdf"
 
-        # Generación basada estrictamente en tu plantilla .docx
+        # 1. Rellenar plantilla DOCX
         rellenar_plantilla(datos_docx, fotos_subidas, ruta_salida_docx)
 
+        # 2. Convertir DOCX a PDF
+        se_convertio_pdf = convertir_docx_a_pdf(ruta_salida_docx, ruta_salida_pdf)
+
+        # 3. Registrar en el archivo Excel
         df_existente = pd.read_excel(EXCEL_FILE)
         nueva_fila = {
             "Num_OT": num_ot, "Fecha_Registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -320,7 +337,7 @@ if opcion == "📋 Cargar Orden de Servicio":
             "Area": area, "Codigo_Maq": codigo_maq, "Maquina": maquina_final, "Horometro": horometro,
             "Tecnico_Inicial": tecnico_final, "Tecnico_Final": tecnico_final if estado_ot != "PENDIENTE / A CONTINUAR" else "",
             "Descripcion": descripcion_del_servicio, "Tipo_Mantenimiento": tipo_mantenimiento, "Horas_Mantenimiento": horas_mantenimiento,
-            "Prioridad": prioridad, "Causa_Falla": causa_falla_final, "Categoria_Falla_AI": categoria_ai, 
+            "Prioridad": prioridad, "Causa_Falla": causa_falla_final, "Categoria_Falla_AI": "Mecánica", 
             "Motivo_Pendiente": motivo_pendiente, "Materiales": materiales, "Insumo_Cantidad": insumos_unidades, 
             "Fecha_Inicial": str(fecha_inicial), "Hora_Final": str(hora_final), "Fecha_Entrega": str(fecha_entrega), "Observaciones": observaciones
         }
@@ -328,13 +345,20 @@ if opcion == "📋 Cargar Orden de Servicio":
         df_actualizado = pd.concat([df_existente, pd.DataFrame([nueva_fila])], ignore_index=True)
         df_actualizado.to_excel(EXCEL_FILE, index=False)
 
-        respaldar_trabajo_en_cloudinary(num_ot, ruta_salida_docx, fotos_subidas)
+        # 4. Respaldar en Cloudinary
+        archivo_para_respaldo = ruta_salida_pdf if se_convertio_pdf else ruta_salida_docx
+        respaldar_trabajo_en_cloudinary(num_ot, archivo_para_respaldo, fotos_subidas)
 
-        st.success(f"✅ Orden {num_ot} registrada y generada exitosamente con el formato de plantilla.")
+        st.success(f"✅ Orden {num_ot} registrada y generada exitosamente.")
+
+        # Botones de descarga
+        if se_convertio_pdf and os.path.exists(ruta_salida_pdf):
+            with open(ruta_salida_pdf, "rb") as file_pdf:
+                st.download_button("📥 Descargar Orden Oficial (.pdf)", data=file_pdf, file_name=ruta_salida_pdf, mime="application/pdf")
         
         if os.path.exists(ruta_salida_docx):
             with open(ruta_salida_docx, "rb") as file_docx:
-                st.download_button("📥 Descargar Orden Oficial (.docx)", data=file_docx, file_name=ruta_salida_docx)
+                st.download_button("📄 Descargar Formato Editable (.docx)", data=file_docx, file_name=ruta_salida_docx)
 
 # ==========================================
 # SECCIÓN 2: TRABAJOS PENDIENTES
@@ -397,12 +421,20 @@ elif opcion == "⏳ Trabajos Pendientes":
 
                 nombre_base = f"{tec_final_opc}_{datetime.now().strftime('%Y-%m-%d')}_{row_ot.get('Maquina','')}_{ot_seleccionada}"
                 ruta_salida_docx = f"{nombre_base}.docx"
+                ruta_salida_pdf = f"{nombre_base}.pdf"
 
                 rellenar_plantilla(datos_docx, fotos_subidas_f, ruta_salida_docx)
-                respaldar_trabajo_en_cloudinary(ot_seleccionada, ruta_salida_docx, fotos_subidas_f)
+                se_convertio_pdf = convertir_docx_a_pdf(ruta_salida_docx, ruta_salida_pdf)
+
+                archivo_respaldo = ruta_salida_pdf if se_convertio_pdf else ruta_salida_docx
+                respaldar_trabajo_en_cloudinary(ot_seleccionada, archivo_respaldo, fotos_subidas_f)
 
                 st.success(f"🎉 Orden {ot_seleccionada} completada exitosamente.")
-                if os.path.exists(ruta_salida_docx):
+                
+                if se_convertio_pdf and os.path.exists(ruta_salida_pdf):
+                    with open(ruta_salida_pdf, "rb") as file_pdf:
+                        st.download_button("📥 Descargar Documento Final (.pdf)", data=file_pdf, file_name=ruta_salida_pdf, mime="application/pdf")
+                elif os.path.exists(ruta_salida_docx):
                     with open(ruta_salida_docx, "rb") as file_docx:
                         st.download_button("💾 Descargar Documento Final (.docx)", data=file_docx, file_name=ruta_salida_docx)
         else:
