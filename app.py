@@ -1,20 +1,22 @@
-import streamlit as st
+import os
+from datetime import datetime
 import pandas as pd
 import openpyxl
+import requests
+import streamlit as st
+import plotly.express as px
+import google.generativeai as genai
+
 from docx import Document
 from docx.shared import Inches
 from docxtpl import DocxTemplate
-import os
-from datetime import datetime
-import plotly.express as px
-import google.generativeai as genai
-import requests
 
 # ReportLab para generación directa de PDF en servidores Linux / Cloud
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
 
 # ==========================================
 # CONFIGURACIÓN DE CLOUDINARY (UNSIGNED)
@@ -94,7 +96,7 @@ st.markdown("""
         }
 
         div[data-baseweb="popover"], div[role="listbox"], ul[role="listbox"] li {
-            background-color: #FFFFFF !important;
+            background-color: #FFFFFF !important;   
             color: #1E232A !important;
         }
         
@@ -104,12 +106,12 @@ st.markdown("""
         }
         
         h1, h2, h3, .stHeader {
-            color: #C0392B !important;
+            color: #A61C1C !important;
             font-weight: 700 !important;
         }
         
         div.stButton > button:first-child {
-            background-color: #C0392B !important;
+            background-color: #A61C1C !important;
             color: #FFFFFF !important;
             border-radius: 6px !important;
             border: none !important;
@@ -119,19 +121,19 @@ st.markdown("""
             transition: all 0.3s ease !important;
         }
         div.stButton > button:first-child:hover {
-            background-color: #900C3F !important;
+            background-color: #801414 !important;
             color: #FFFFFF !important;
-            box-shadow: 0px 4px 10px rgba(192, 57, 43, 0.4) !important;
+            box-shadow: 0px 4px 10px rgba(166, 28, 28, 0.4) !important;
         }
 
         [data-testid="stMetricValue"] {
-            color: #C0392B !important;
+            color: #A61C1C !important;
             font-weight: bold !important;
         }
 
         .card-pendiente {
             background-color: #FDEDEC !important;
-            border-left: 5px solid #C0392B !important;
+            border-left: 5px solid #A61C1C !important;
             padding: 15px !important;
             border-radius: 6px !important;
             margin-bottom: 15px !important;
@@ -141,7 +143,7 @@ st.markdown("""
             color: #1E232A !important;
         }
         .card-pendiente h3 {
-            color: #C0392B !important;
+            color: #A61C1C !important;
         }
 
         .card-completado {
@@ -312,9 +314,9 @@ def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
                 doc.add_picture(foto, width=Inches(4.5))
         doc.save(ruta_salida_docx)
 
-def generar_pdf_reportlab(datos_dict, ruta_pdf):
+def generar_pdf_reportlab(datos_dict, fotos_subidas, ruta_pdf):
     """
-    Genera un PDF profesional utilizando ReportLab, totalmente independiente de MS Word/Linux.
+    Genera un PDF profesional utilizando ReportLab, totalmente formateado e incluyendo imágenes.
     """
     try:
         doc = SimpleDocTemplate(
@@ -328,18 +330,28 @@ def generar_pdf_reportlab(datos_dict, ruta_pdf):
             'TitleStyle',
             parent=styles['Heading1'],
             fontSize=16,
-            textColor=colors.HexColor('#C0392B'),
+            leading=20,
+            textColor=colors.HexColor('#A61C1C'),
             alignment=1,
             spaceAfter=15
         )
         
-        label_style = ParagraphStyle('LabelStyle', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold', textColor=colors.HexColor('#1E232A'))
-        value_style = ParagraphStyle('ValueStyle', parent=styles['Normal'], fontSize=9, fontName='Helvetica', textColor=colors.HexColor('#1E232A'))
+        label_style = ParagraphStyle(
+            'LabelStyle', parent=styles['Normal'], fontSize=9, leading=12, fontName='Helvetica-Bold', textColor=colors.HexColor('#1E232A')
+        )
+        value_style = ParagraphStyle(
+            'ValueStyle', parent=styles['Normal'], fontSize=9, leading=12, fontName='Helvetica', textColor=colors.HexColor('#1E232A')
+        )
+        sec_style = ParagraphStyle(
+            'SecStyle', parent=styles['Heading2'], fontSize=11, leading=14, textColor=colors.HexColor('#A61C1C'), spaceBefore=10, spaceAfter=4
+        )
 
         elements = []
+        
+        # 1. Título
         elements.append(Paragraph("YAGUARETE PAPELES - ORDEN DE SERVICIO", title_style))
-        elements.append(Spacer(1, 10))
 
+        # 2. Tabla Encabezado
         tabla_datos = [
             [Paragraph("N° OT:", label_style), Paragraph(str(datos_dict.get("<<numOT>>", "")), value_style), Paragraph("Área:", label_style), Paragraph(str(datos_dict.get("<<area>>", "")), value_style)],
             [Paragraph("Equipo / Máquina:", label_style), Paragraph(str(datos_dict.get("<<Maquina>>", "")), value_style), Paragraph("Código Máq:", label_style), Paragraph(str(datos_dict.get("<<códigomaq>>", "")), value_style)],
@@ -349,34 +361,69 @@ def generar_pdf_reportlab(datos_dict, ruta_pdf):
             [Paragraph("Hora Final:", label_style), Paragraph(str(datos_dict.get("<<hora_final>>", "")), value_style), Paragraph("", label_style), Paragraph("", value_style)],
         ]
 
-        t = Table(tabla_datos, colWidths=[90, 180, 90, 180])
+        t = Table(tabla_datos, colWidths=[110, 160, 110, 160])
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8F9F9')),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#D5D8DC')),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('PADDING', (0,0), (-1,-1), 5),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8F9FA')),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D1D5DB')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ]))
         elements.append(t)
-        elements.append(Spacer(1, 15))
-
-        sec_style = ParagraphStyle('SecStyle', parent=styles['Heading2'], fontSize=11, textColor=colors.HexColor('#C0392B'), spaceAfter=5)
-        
-        elements.append(Paragraph("Descripción del Servicio", sec_style))
-        elements.append(Paragraph(str(datos_dict.get("<<descripcion_del_servicio>>", "")), value_style))
         elements.append(Spacer(1, 10))
 
-        elements.append(Paragraph("Causa de Falla / Trabajos Realizados", sec_style))
-        elements.append(Paragraph(str(datos_dict.get("<<causa_falla>>", "")), value_style))
-        elements.append(Spacer(1, 10))
+        # 3. Bloques de Información
+        secciones = [
+            ("Descripción del Servicio", datos_dict.get("<<descripcion_del_servicio>>", "")),
+            ("Causa de Falla / Trabajos Realizados", datos_dict.get("<<causa_falla>>", "")),
+            ("Materiales / Repuestos Utilizados", datos_dict.get("<<Materiales>>", "")),
+            ("Observaciones Generales", datos_dict.get("<<observaciones>>", ""))
+        ]
 
-        elements.append(Paragraph("Materiales / Repuestos Utilizados", sec_style))
-        elements.append(Paragraph(str(datos_dict.get("<<Materiales>>", "")), value_style))
-        elements.append(Spacer(1, 10))
+        for titulo, contenido in secciones:
+            elements.append(Paragraph(titulo, sec_style))
+            elements.append(Paragraph(str(contenido) if contenido else "N/A", value_style))
+            elements.append(Spacer(1, 6))
 
-        elements.append(Paragraph("Observaciones Generales", sec_style))
-        elements.append(Paragraph(str(datos_dict.get("<<observaciones>>", "")), value_style))
+        # 4. Fotos Adjuntas al Final del PDF
+        if fotos_subidas:
+            elements.append(Spacer(1, 10))
+            elements.append(Paragraph("Evidencia Fotográfica", sec_style))
+            elements.append(Spacer(1, 4))
+            
+            for i, foto in enumerate(fotos_subidas):
+                try:
+                    foto.seek(0)
+                    temp_img_path = f"temp_pdf_img_{i}.png"
+                    with open(temp_img_path, "wb") as f_temp:
+                        f_temp.write(foto.read())
+                    
+                    img = RLImage(temp_img_path)
+                    max_width = 6.5 * inch
+                    max_height = 3.5 * inch
+
+                    aspect = img.imageWidth / float(img.imageHeight)
+                    if aspect > 1:
+                        img.drawWidth = min(max_width, img.imageWidth)
+                        img.drawHeight = img.drawWidth / aspect
+                    else:
+                        img.drawHeight = min(max_height, img.imageHeight)
+                        img.drawWidth = img.drawHeight * aspect
+
+                    elements.append(img)
+                    elements.append(Spacer(1, 8))
+                except Exception as e_img:
+                    elements.append(Paragraph(f"Error adjuntando foto: {e_img}", value_style))
 
         doc.build(elements)
+
+        # Limpieza de archivos temporales de imagen creados para el PDF
+        if fotos_subidas:
+            for i in range(len(fotos_subidas)):
+                temp_img_path = f"temp_pdf_img_{i}.png"
+                if os.path.exists(temp_img_path):
+                    os.remove(temp_img_path)
+
         return ruta_pdf
     except Exception as e:
         st.warning(f"Error generando PDF dinámico: {e}")
@@ -385,7 +432,7 @@ def generar_pdf_reportlab(datos_dict, ruta_pdf):
 # ==========================================
 # 3. NAVEGACIÓN Y MENÚ PRINCIPAL
 # ==========================================
-st.sidebar.markdown("<h2 style='color: #C0392B; text-align: center; margin-bottom: 0px;'>YAGUARETE</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h2 style='color: #A61C1C; text-align: center; margin-bottom: 0px;'>YAGUARETE</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("<p style='text-align: center; font-weight: bold; color: #1E232A; margin-top: 0px;'>PAPELES</p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
@@ -398,7 +445,7 @@ opcion = st.sidebar.radio(
 # SECCIÓN 1: CARGAR ORDEN DE SERVICIO
 # ==========================================
 if opcion == "📋 Cargar Orden de Servicio":
-    st.markdown("<h1 style='color: #C0392B;'>📋 Registro de Orden de Servicio</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #A61C1C;'>📋 Registro de Orden de Servicio</h1>", unsafe_allow_html=True)
     st.write("Diligencie el formulario correspondiente al mantenimiento o reparación efectuada.")
     st.markdown("---")
 
@@ -540,7 +587,7 @@ if opcion == "📋 Cargar Orden de Servicio":
 
         # Generar DOCX y PDF
         rellenar_plantilla(datos_docx, fotos_subidas, ruta_salida_docx)
-        generar_pdf_reportlab(datos_docx, ruta_salida_pdf)
+        generar_pdf_reportlab(datos_docx, fotos_subidas, ruta_salida_pdf)
 
         archivo_a_respaldar = ruta_salida_pdf if os.path.exists(ruta_salida_pdf) else ruta_salida_docx
 
@@ -578,7 +625,7 @@ if opcion == "📋 Cargar Orden de Servicio":
 # SECCIÓN 2: TRABAJOS PENDIENTES Y COMPLETADOS
 # ==========================================
 elif opcion == "⏳ Trabajos Pendientes":
-    st.markdown("<h1 style='color: #C0392B;'>⏳ Gestor de Trabajos Pendientes y Finalizados</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #A61C1C;'>⏳ Gestor de Trabajos Pendientes y Finalizados</h1>", unsafe_allow_html=True)
     st.write("Administra las Órdenes de Trabajo pendientes, complétalas o consulta el historial de trabajos finalizados por otros técnicos.")
     st.markdown("---")
 
@@ -698,7 +745,7 @@ elif opcion == "⏳ Trabajos Pendientes":
 
                 # Generar DOCX y PDF
                 rellenar_plantilla(datos_docx, fotos_subidas_f, ruta_salida_docx)
-                generar_pdf_reportlab(datos_docx, ruta_salida_pdf)
+                generar_pdf_reportlab(datos_docx, fotos_subidas_f, ruta_salida_pdf)
 
                 archivo_a_respaldar = ruta_salida_pdf if os.path.exists(ruta_salida_pdf) else ruta_salida_docx
 
@@ -773,7 +820,7 @@ elif opcion == "⏳ Trabajos Pendientes":
 # SECCIÓN 3: PANEL DE ESTADÍSTICAS REESTRUCTURADO
 # ==========================================
 elif opcion == "📊 Panel de Estadísticas":
-    st.markdown("<h1 style='color: #C0392B;'>📊 Panel de Estadísticas e Indicadores</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #A61C1C;'>📊 Panel de Estadísticas e Indicadores</h1>", unsafe_allow_html=True)
     st.markdown("---")
 
     if os.path.exists(EXCEL_FILE):
@@ -815,7 +862,7 @@ elif opcion == "📊 Panel de Estadísticas":
 
                         fig_maq = px.bar(
                             causas_count.head(10), x="Frecuencia", y="Problema / Causa", 
-                            orientation='h', color_discrete_sequence=['#C0392B']
+                            orientation='h', color_discrete_sequence=['#A61C1C']
                         )
                         fig_maq.update_layout(yaxis=dict(autorange="reversed"), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                         st.plotly_chart(fig_maq, use_container_width=True)
@@ -849,7 +896,7 @@ elif opcion == "📊 Panel de Estadísticas":
                         cat_count = df["Categoria_Falla_AI"].value_counts().reset_index()
                         cat_count.columns = ["Categoría", "Frecuencia"]
                         
-                        fig_cat = px.bar(cat_count, x="Categoría", y="Frecuencia", color_discrete_sequence=['#900C3F'])
+                        fig_cat = px.bar(cat_count, x="Categoría", y="Frecuencia", color_discrete_sequence=['#801414'])
                         fig_cat.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                         st.plotly_chart(fig_cat, use_container_width=True)
 
@@ -866,7 +913,7 @@ elif opcion == "📊 Panel de Estadísticas":
                     tipo_counts = df["Tipo_Mantenimiento"].value_counts().reset_index()
                     tipo_counts.columns = ["Tipo", "Cantidad"]
 
-                    fig_tipo = px.bar(tipo_counts, x="Tipo", y="Cantidad", color="Tipo", color_discrete_sequence=['#27AE60', '#C0392B', '#F39C12'])
+                    fig_tipo = px.bar(tipo_counts, x="Tipo", y="Cantidad", color="Tipo", color_discrete_sequence=['#27AE60', '#A61C1C', '#F39C12'])
                     fig_tipo.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                     st.plotly_chart(fig_tipo, use_container_width=True)
 
