@@ -164,20 +164,15 @@ if not os.path.exists(EXCEL_FILE):
     df_init.to_excel(EXCEL_FILE, index=False)
 
 def obtener_siguiente_ot():
-    """Calcula estrictamente el siguiente correlativo buscando el número máximo."""
+    """Calcula el siguiente correlativo buscando el número máximo guardado en la columna Num_OT."""
     if os.path.exists(EXCEL_FILE):
         try:
-            wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
-            sheet = wb.active
-            numeros = []
-            for row in sheet.iter_rows(min_row=2, values_only=True):
-                ot_val = row[0]
-                if ot_val:
-                    digits = re.findall(r'\d+', str(ot_val))
-                    if digits:
-                        numeros.append(int(digits[-1]))
-            if numeros:
-                return f"OT-{max(numeros) + 1:05d}"
+            df_ot = pd.read_excel(EXCEL_FILE, usecols=[0])
+            if not df_ot.empty:
+                numeros = df_ot.iloc[:, 0].astype(str).str.extract(r'(\d+)')[0].dropna().astype(int)
+                if not numeros.empty:
+                    siguiente = numeros.max() + 1
+                    return f"OT-{siguiente:05d}"
         except Exception:
             pass
     return "OT-00001"
@@ -224,7 +219,7 @@ def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
             'hora_final': datos_dict.get("hora_final", ""),
             'fecha_de_entrega': datos_dict.get("fecha_de_entrega", ""),
             'observaciones': datos_dict.get("observaciones", ""),
-            'fotos': imagenes_inline if imagenes_inline else ""
+            'fotos': imagenes_inline if imagenes_inline else []
         }
         
         doc.render(contexto)
@@ -371,12 +366,11 @@ if opcion == "📋 Cargar Orden de Servicio":
         archivo_para_respaldo = ruta_salida_pdf if se_convertio_pdf else ruta_salida_docx
         respaldar_trabajo_en_cloudinary(num_ot, archivo_para_respaldo, fotos_subidas)
 
-        # Forzar incremento de OT para la siguiente carga
+        # Forzar incremento de OT para la siguiente carga y recargar app
         st.session_state["current_ot"] = obtener_siguiente_ot()
-
         st.success(f"✅ Orden {num_ot} registrada exitosamente.")
 
-        # Botones de descarga claros
+        # Botones de descarga
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             if se_convertio_pdf and os.path.exists(ruta_salida_pdf):
@@ -390,6 +384,8 @@ if opcion == "📋 Cargar Orden de Servicio":
             if os.path.exists(ruta_salida_docx):
                 with open(ruta_salida_docx, "rb") as file_docx:
                     st.download_button("📄 Descargar Formato Editable (.docx)", data=file_docx, file_name=ruta_salida_docx)
+
+        st.rerun()
 
 elif opcion == "⏳ Trabajos Pendientes":
     st.markdown("<h1 style='color: #A61C1C;'>⏳ Gestor de Trabajos Pendientes y Finalizados</h1>", unsafe_allow_html=True)
