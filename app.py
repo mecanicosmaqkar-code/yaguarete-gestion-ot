@@ -60,7 +60,7 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
         return None, []
 
 # ==========================================
-# 1. ESTILO VISUAL ABSOLUTO (INCLUYE BASEWEB PORTAL)
+# 1. ESTILO VISUAL ABSOLUTO
 # ==========================================
 st.set_page_config(page_title="Yaguarete Papeles - Gestión OT", layout="wide", page_icon="📋")
 
@@ -85,7 +85,7 @@ st.markdown("""
             border-radius: 6px !important; 
         }
 
-        /* FORZAR FONDO BLANCO EN EL POPUP / DESPLEGABLE DE BASEWEB */
+        /* POPUP / DESPLEGABLE DE BASEWEB */
         div[data-baseweb="popover"], div[data-baseweb="menu"], ul[role="listbox"], [data-baseweb="popover"] * {
             background-color: #FFFFFF !important;
             color: #1E232A !important;
@@ -103,7 +103,7 @@ st.markdown("""
             color: #A61C1C !important;
         }
 
-        /* Corregir Botones Oscuros (Download Buttons) */
+        /* Botones Oscuros y Descarga */
         div.stButton > button, div.stDownloadButton > button {
             background-color: #A61C1C !important;
             color: #FFFFFF !important;
@@ -117,7 +117,7 @@ st.markdown("""
             color: #FFFFFF !important;
         }
 
-        /* File Uploader (Fotos) */
+        /* File Uploader */
         [data-testid="stFileUploader"] section {
             background-color: #F8F9F9 !important;
             border: 2px dashed #A61C1C !important;
@@ -164,7 +164,7 @@ if not os.path.exists(EXCEL_FILE):
     df_init.to_excel(EXCEL_FILE, index=False)
 
 def obtener_siguiente_ot():
-    """Calcula el siguiente correlativo buscando el número máximo guardado en la columna Num_OT."""
+    """Calcula estrictamente el siguiente correlativo buscando el número máximo guardado en la columna Num_OT."""
     if os.path.exists(EXCEL_FILE):
         try:
             df_ot = pd.read_excel(EXCEL_FILE, usecols=[0])
@@ -239,7 +239,12 @@ st.sidebar.markdown("---")
 
 opcion = st.sidebar.radio(
     "Navegación principal:",
-    ["📋 Cargar Orden de Servicio", "⏳ Trabajos Pendientes", "📊 Panel de Estadísticas"]
+    [
+        "📋 Cargar Orden de Servicio", 
+        "⏳ Trabajos Pendientes", 
+        "📊 Panel de Estadísticas",
+        "📂 Historial PDF"
+    ]
 )
 
 if opcion == "📋 Cargar Orden de Servicio":
@@ -366,11 +371,12 @@ if opcion == "📋 Cargar Orden de Servicio":
         archivo_para_respaldo = ruta_salida_pdf if se_convertio_pdf else ruta_salida_docx
         respaldar_trabajo_en_cloudinary(num_ot, archivo_para_respaldo, fotos_subidas)
 
-        # Forzar incremento de OT para la siguiente carga y recargar app
+        # Actualizar número para la siguiente OT
         st.session_state["current_ot"] = obtener_siguiente_ot()
+
         st.success(f"✅ Orden {num_ot} registrada exitosamente.")
 
-        # Botones de descarga
+        # Botones de descarga directos
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             if se_convertio_pdf and os.path.exists(ruta_salida_pdf):
@@ -384,8 +390,6 @@ if opcion == "📋 Cargar Orden de Servicio":
             if os.path.exists(ruta_salida_docx):
                 with open(ruta_salida_docx, "rb") as file_docx:
                     st.download_button("📄 Descargar Formato Editable (.docx)", data=file_docx, file_name=ruta_salida_docx)
-
-        st.rerun()
 
 elif opcion == "⏳ Trabajos Pendientes":
     st.markdown("<h1 style='color: #A61C1C;'>⏳ Gestor de Trabajos Pendientes y Finalizados</h1>", unsafe_allow_html=True)
@@ -482,3 +486,44 @@ elif opcion == "📊 Panel de Estadísticas":
             c2.metric("Pendientes", len(df[df["Estado"] == "PENDIENTE"]))
             c3.metric("Finalizadas", len(df[df["Estado"] == "FINALIZADO"]))
             st.dataframe(df, use_container_width=True)
+
+elif opcion == "📂 Historial PDF":
+    st.markdown("<h1 style='color: #A61C1C;'>📂 Historial PDF y Documentos Generados</h1>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # Listar todos los archivos PDF y DOCX guardados en la raíz
+    archivos_locales = [f for f in os.listdir(".") if f.endswith(".pdf") or f.endswith(".docx")]
+    
+    # Excluir la plantilla original
+    documentos_ot = [f for f in archivos_locales if f != PLANTILLA_FILE]
+
+    if documentos_ot:
+        st.subheader("Buscar y Descargar Documentos Generados")
+        
+        busqueda = st.text_input("🔍 Buscar por Número de OT, Equipo o Técnico:", "")
+        
+        if busqueda:
+            documentos_ot = [doc for doc in documentos_ot if busqueda.lower() in doc.lower()]
+
+        if documentos_ot:
+            for archivo in sorted(documentos_ot, reverse=True):
+                col_nombre, col_btn = st.columns([3, 1])
+                
+                with col_nombre:
+                    st.write(f"📄 **{archivo}**")
+                
+                with col_btn:
+                    with open(archivo, "rb") as f:
+                        mime_type = "application/pdf" if archivo.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        st.download_button(
+                            label="📥 Descargar",
+                            data=f,
+                            file_name=archivo,
+                            mime=mime_type,
+                            key=f"dl_{archivo}"
+                        )
+                st.markdown("---")
+        else:
+            st.warning("No se encontraron documentos que coincidan con el criterio de búsqueda.")
+    else:
+        st.info("ℹ️ Aún no hay documentos PDF o DOCX registrados en el sistema.")
