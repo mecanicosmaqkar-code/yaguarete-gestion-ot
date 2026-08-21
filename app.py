@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 from datetime import datetime
 import pandas as pd
@@ -59,44 +60,73 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
         return None, []
 
 # ==========================================
-# 1. CONFIGURACIÓN Y ESTILO VISUAL (CSS CORREGIDO)
+# 1. ESTILO VISUAL ABSOLUTO (INCLUYE BASEWEB PORTAL)
 # ==========================================
 st.set_page_config(page_title="Yaguarete Papeles - Gestión OT", layout="wide", page_icon="📋")
 
 st.markdown("""
     <style>
-        .stApp, [data-testid="stAppViewContainer"] { background-color: #FFFFFF !important; color: #1E232A !important; }
-        label, p, span, div, .stMarkdown { color: #1E232A !important; font-weight: 600 !important; }
-        
-        /* Cajas de texto y selectores */
-        input, select, textarea, div[role="combobox"] { background-color: #FFFFFF !important; color: #1E232A !important; border: 1px solid #D5D8DC !important; border-radius: 6px !important; }
-        
-        /* Corregir menú desplegable emergente (fondo negro) */
-        ul[role="listbox"], [data-baseweb="menu"], [data-baseweb="popover"] {
+        /* Forzar fondo blanco general */
+        html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] { 
+            background-color: #FFFFFF !important; 
+            color: #1E232A !important; 
+        }
+
+        label, p, span, div, h1, h2, h3, .stMarkdown { 
+            color: #1E232A !important; 
+            font-weight: 600 !important; 
+        }
+
+        /* Inputs, Textareas y Selectboxes */
+        input, select, textarea, div[role="combobox"], [data-baseweb="select"] { 
+            background-color: #FFFFFF !important; 
+            color: #1E232A !important; 
+            border: 1px solid #D5D8DC !important; 
+            border-radius: 6px !important; 
+        }
+
+        /* FORZAR FONDO BLANCO EN EL POPUP / DESPLEGABLE DE BASEWEB */
+        div[data-baseweb="popover"], div[data-baseweb="menu"], ul[role="listbox"], [data-baseweb="popover"] * {
             background-color: #FFFFFF !important;
             color: #1E232A !important;
         }
-        li[role="option"], [data-baseweb="option"] {
+
+        /* Opciones individuales dentro del desplegable */
+        li[role="option"], [data-baseweb="option"], div[role="option"] {
             background-color: #FFFFFF !important;
             color: #1E232A !important;
         }
-        li[role="option"]:hover, [data-baseweb="option"]:hover {
-            background-color: #E5E8E8 !important;
+
+        /* Hover sobre opciones */
+        li[role="option"]:hover, [data-baseweb="option"]:hover, div[role="option"]:hover {
+            background-color: #F2F4F4 !important;
             color: #A61C1C !important;
         }
 
-        /* Corregir cuadro de carga de archivos (Fotos) */
+        /* Corregir Botones Oscuros (Download Buttons) */
+        div.stButton > button, div.stDownloadButton > button {
+            background-color: #A61C1C !important;
+            color: #FFFFFF !important;
+            border-radius: 6px !important;
+            border: none !important;
+            padding: 10px 20px !important;
+            font-weight: 700 !important;
+        }
+
+        div.stDownloadButton > button * {
+            color: #FFFFFF !important;
+        }
+
+        /* File Uploader (Fotos) */
         [data-testid="stFileUploader"] section {
             background-color: #F8F9F9 !important;
             border: 2px dashed #A61C1C !important;
         }
-        [data-testid="stFileUploader"] section * {
-            color: #1E232A !important;
-        }
 
-        [data-testid="stSidebar"] { background-color: #F4F6F6 !important; border-right: 2px solid #E5E8E8 !important; }
-        h1, h2, h3, .stHeader { color: #A61C1C !important; font-weight: 700 !important; }
-        div.stButton > button:first-child { background-color: #A61C1C !important; color: #FFFFFF !important; border-radius: 6px !important; border: none !important; padding: 10px 20px !important; font-weight: 700 !important; }
+        [data-testid="stSidebar"] { 
+            background-color: #F4F6F6 !important; 
+            border-right: 2px solid #E5E8E8 !important; 
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -120,7 +150,7 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 2. FUNCIONES Y BASE DE DATOS
+# 2. FUNCIONES Y MANEJO DE ARCHIVOS
 # ==========================================
 columnas_excel = [
     "Num_OT", "Fecha_Registro", "Estado", "Area", "Codigo_Maq", "Maquina", "Horometro",
@@ -134,26 +164,26 @@ if not os.path.exists(EXCEL_FILE):
     df_init.to_excel(EXCEL_FILE, index=False)
 
 def obtener_siguiente_ot():
-    """Calcula el número de OT más alto registrado en el Excel y suma 1."""
+    """Calcula estrictamente el siguiente correlativo buscando el número máximo."""
     if os.path.exists(EXCEL_FILE):
         try:
-            df = pd.read_excel(EXCEL_FILE)
-            if not df.empty and "Num_OT" in df.columns:
-                numeros = []
-                for val in df["Num_OT"].dropna():
-                    val_str = str(val).strip()
-                    digits = ''.join(filter(str.isdigit, val_str))
+            wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
+            sheet = wb.active
+            numeros = []
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                ot_val = row[0]
+                if ot_val:
+                    digits = re.findall(r'\d+', str(ot_val))
                     if digits:
-                        numeros.append(int(digits))
-                if numeros:
-                    siguiente = max(numeros) + 1
-                    return f"OT-{siguiente:05d}"
-        except Exception as e:
-            st.error(f"Error al calcular siguiente OT: {e}")
+                        numeros.append(int(digits[-1]))
+            if numeros:
+                return f"OT-{max(numeros) + 1:05d}"
+        except Exception:
+            pass
     return "OT-00001"
 
 def convertir_docx_a_pdf(ruta_docx, ruta_pdf):
-    """Convierte el archivo DOCX a PDF usando docx2pdf o libreoffice."""
+    """Genera PDF desde DOCX."""
     try:
         from docx2pdf import convert
         convert(ruta_docx, ruta_pdf)
@@ -166,10 +196,9 @@ def convertir_docx_a_pdf(ruta_docx, ruta_pdf):
             return False
 
 def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
-    """Rellena la plantilla Word .docx manteniendo el diseño original."""
+    """Rellena la plantilla Word manteniendo diseño original."""
     if os.path.exists(PLANTILLA_FILE):
         doc = DocxTemplate(PLANTILLA_FILE)
-        
         imagenes_inline = []
         if fotos_subidas:
             for i, foto in enumerate(fotos_subidas):
@@ -206,15 +235,9 @@ def rellenar_plantilla(datos_dict, fotos_subidas, ruta_salida_docx):
                 temp_img_path = f"temp_inline_img_{i}.png"
                 if os.path.exists(temp_img_path):
                     os.remove(temp_img_path)
-    else:
-        doc = Document()
-        doc.add_heading('YAGUARETE PAPELES - ORDEN DE SERVICIO', 0)
-        for k, v in datos_dict.items():
-            doc.add_paragraph(f"{k}: {v}")
-        doc.save(ruta_salida_docx)
 
 # ==========================================
-# 3. NAVEGACIÓN Y MENÚ PRINCIPAL
+# 3. NAVEGACIÓN PRINCIPAL
 # ==========================================
 st.sidebar.markdown("<h2 style='color: #A61C1C; text-align: center;'>YAGUARETE PAPELES</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
@@ -224,19 +247,18 @@ opcion = st.sidebar.radio(
     ["📋 Cargar Orden de Servicio", "⏳ Trabajos Pendientes", "📊 Panel de Estadísticas"]
 )
 
-# ==========================================
-# SECCIÓN 1: CARGAR ORDEN DE SERVICIO
-# ==========================================
 if opcion == "📋 Cargar Orden de Servicio":
     st.markdown("<h1 style='color: #A61C1C;'>📋 Registro de Orden de Servicio</h1>", unsafe_allow_html=True)
     st.markdown("---")
 
-    ot_sugerida = obtener_siguiente_ot()
+    # Mantenimiento de Estado de OT en Session
+    if "current_ot" not in st.session_state:
+        st.session_state["current_ot"] = obtener_siguiente_ot()
 
     with st.form("form_ot"):
         col1, col2 = st.columns(2)
         with col1:
-            num_ot = st.text_input("Número de OT", value=ot_sugerida, disabled=True)
+            num_ot = st.text_input("Número de OT", value=st.session_state["current_ot"], disabled=True)
             estado_ot = st.selectbox("Estado del Trabajo *", ["FINALIZADO", "PENDIENTE / A CONTINUAR"])
             area = st.selectbox("Área *", options=["-- Seleccionar --"] + AREAS)
             maquina_seleccionada = st.selectbox("Equipo o Máquina *", options=["-- Seleccionar --"] + list(MAQUINAS_DICT.keys()))
@@ -323,13 +345,13 @@ if opcion == "📋 Cargar Orden de Servicio":
         ruta_salida_docx = f"{nombre_base_trabajo}.docx"
         ruta_salida_pdf = f"{nombre_base_trabajo}.pdf"
 
-        # 1. Rellenar plantilla DOCX
+        # Generar Documento en Plantilla Word
         rellenar_plantilla(datos_docx, fotos_subidas, ruta_salida_docx)
 
-        # 2. Convertir DOCX a PDF
+        # Convertir a PDF
         se_convertio_pdf = convertir_docx_a_pdf(ruta_salida_docx, ruta_salida_pdf)
 
-        # 3. Registrar en el archivo Excel
+        # Guardar en Excel
         df_existente = pd.read_excel(EXCEL_FILE)
         nueva_fila = {
             "Num_OT": num_ot, "Fecha_Registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -345,24 +367,30 @@ if opcion == "📋 Cargar Orden de Servicio":
         df_actualizado = pd.concat([df_existente, pd.DataFrame([nueva_fila])], ignore_index=True)
         df_actualizado.to_excel(EXCEL_FILE, index=False)
 
-        # 4. Respaldar en Cloudinary
+        # Subir Respaldo
         archivo_para_respaldo = ruta_salida_pdf if se_convertio_pdf else ruta_salida_docx
         respaldar_trabajo_en_cloudinary(num_ot, archivo_para_respaldo, fotos_subidas)
 
-        st.success(f"✅ Orden {num_ot} registrada y generada exitosamente.")
+        # Forzar incremento de OT para la siguiente carga
+        st.session_state["current_ot"] = obtener_siguiente_ot()
 
-        # Botones de descarga
-        if se_convertio_pdf and os.path.exists(ruta_salida_pdf):
-            with open(ruta_salida_pdf, "rb") as file_pdf:
-                st.download_button("📥 Descargar Orden Oficial (.pdf)", data=file_pdf, file_name=ruta_salida_pdf, mime="application/pdf")
-        
-        if os.path.exists(ruta_salida_docx):
-            with open(ruta_salida_docx, "rb") as file_docx:
-                st.download_button("📄 Descargar Formato Editable (.docx)", data=file_docx, file_name=ruta_salida_docx)
+        st.success(f"✅ Orden {num_ot} registrada exitosamente.")
 
-# ==========================================
-# SECCIÓN 2: TRABAJOS PENDIENTES
-# ==========================================
+        # Botones de descarga claros
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if se_convertio_pdf and os.path.exists(ruta_salida_pdf):
+                with open(ruta_salida_pdf, "rb") as file_pdf:
+                    st.download_button("📥 Descargar Orden Oficial (.pdf)", data=file_pdf, file_name=ruta_salida_pdf, mime="application/pdf")
+            elif os.path.exists(ruta_salida_docx):
+                with open(ruta_salida_docx, "rb") as file_docx:
+                    st.download_button("📥 Descargar Orden Oficial (.docx)", data=file_docx, file_name=ruta_salida_docx)
+
+        with col_btn2:
+            if os.path.exists(ruta_salida_docx):
+                with open(ruta_salida_docx, "rb") as file_docx:
+                    st.download_button("📄 Descargar Formato Editable (.docx)", data=file_docx, file_name=ruta_salida_docx)
+
 elif opcion == "⏳ Trabajos Pendientes":
     st.markdown("<h1 style='color: #A61C1C;'>⏳ Gestor de Trabajos Pendientes y Finalizados</h1>", unsafe_allow_html=True)
     st.markdown("---")
@@ -448,9 +476,6 @@ elif opcion == "⏳ Trabajos Pendientes":
         df_completados = df[df["Estado"] == "FINALIZADO"] if "Estado" in df.columns and not df.empty else pd.DataFrame()
         st.dataframe(df_completados, use_container_width=True)
 
-# ==========================================
-# SECCIÓN 3: PANEL DE ESTADÍSTICAS
-# ==========================================
 elif opcion == "📊 Panel de Estadísticas":
     st.markdown("<h1 style='color: #A61C1C;'>📊 Panel de Estadísticas</h1>", unsafe_allow_html=True)
     if os.path.exists(EXCEL_FILE):
