@@ -491,39 +491,67 @@ elif opcion == "📂 Historial PDF":
     st.markdown("<h1 style='color: #A61C1C;'>📂 Historial PDF y Documentos Generados</h1>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # Listar todos los archivos PDF y DOCX guardados en la raíz
-    archivos_locales = [f for f in os.listdir(".") if f.endswith(".pdf") or f.endswith(".docx")]
-    
-    # Excluir la plantilla original
-    documentos_ot = [f for f in archivos_locales if f != PLANTILLA_FILE]
+    # 1. Buscar primero archivos en la raíz del servidor local
+    archivos_locales = [f for f in os.listdir(".") if (f.endswith(".pdf") or f.endswith(".docx")) and f != PLANTILLA_FILE]
 
-    if documentos_ot:
-        st.subheader("Buscar y Descargar Documentos Generados")
-        
+    # 2. Si no hay locales o se prefiere consultar el registro, leer desde el Excel
+    if os.path.exists(EXCEL_FILE):
+        df_historial = pd.read_excel(EXCEL_FILE)
+    else:
+        df_historial = pd.DataFrame()
+
+    st.subheader("Archivos Disponibles")
+
+    # Si se encontraron archivos físicos en la carpeta local
+    if archivos_locales:
         busqueda = st.text_input("🔍 Buscar por Número de OT, Equipo o Técnico:", "")
+        if busqueda:
+            archivos_locales = [doc for doc in archivos_locales if busqueda.lower() in doc.lower()]
+
+        for archivo in sorted(archivos_locales, reverse=True):
+            col_nombre, col_btn = st.columns([3, 1])
+            with col_nombre:
+                st.write(f"📄 **{archivo}**")
+            with col_btn:
+                with open(archivo, "rb") as f:
+                    mime_type = "application/pdf" if archivo.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    st.download_button(
+                        label="📥 Descargar",
+                        data=f,
+                        file_name=archivo,
+                        mime=mime_type,
+                        key=f"dl_hist_{archivo}"
+                    )
+            st.markdown("---")
+
+    # Si la app está en la nube (Streamlit Cloud) y los archivos locales no persisten, mostramos el enlace/registro del Excel
+    elif not df_historial.empty:
+        st.info("ℹ️ Mostrando registro de órdenes desde la base de datos (Excel).")
+        busqueda = st.text_input("🔍 Buscar OT en el historial:", "")
         
         if busqueda:
-            documentos_ot = [doc for doc in documentos_ot if busqueda.lower() in doc.lower()]
+            df_historial = df_historial[df_historial.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
 
-        if documentos_ot:
-            for archivo in sorted(documentos_ot, reverse=True):
-                col_nombre, col_btn = st.columns([3, 1])
-                
-                with col_nombre:
-                    st.write(f"📄 **{archivo}**")
-                
-                with col_btn:
-                    with open(archivo, "rb") as f:
-                        mime_type = "application/pdf" if archivo.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        st.download_button(
-                            label="📥 Descargar",
-                            data=f,
-                            file_name=archivo,
-                            mime=mime_type,
-                            key=f"dl_{archivo}"
-                        )
-                st.markdown("---")
-        else:
-            st.warning("No se encontraron documentos que coincidan con el criterio de búsqueda.")
+        for _, fila in df_historial.iterrows():
+            num_ot_rec = fila.get("Num_OT", "N/A")
+            tec_rec = fila.get("Tecnico_Inicial", "N/A")
+            maq_rec = fila.get("Maquina", "N/A")
+            fecha_rec = fila.get("Fecha_Registro", "N/A")
+
+            # Intentar re-armar el nombre del archivo si existe localmente
+            nombre_esperado = f"{tec_rec}_{str(fecha_rec)[:10]}_{maq_rec}_{num_ot_rec}.pdf"
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"📋 **OT:** {num_ot_rec} | **Equipo:** {maq_rec} | **Técnico:** {tec_rec} | **Fecha:** {fecha_rec}")
+            with col2:
+                if os.path.exists(nombre_esperado):
+                    with open(nombre_esperado, "rb") as f:
+                        st.download_button("📥 Descargar PDF", data=f, file_name=nombre_esperado, mime="application/pdf", key=f"btn_ex_{num_ot_rec}")
+                else:
+                    # Enlace directo de respaldo a Cloudinary si está configurado
+                    url_cloudinary = f"https://res.cloudinary.com/{CLOUD_NAME}/raw/upload/Ordenes_de_Trabajo/OT_{num_ot_rec}/OT_{num_ot_rec}_Documento"
+                    st.markdown(f"[🔗 Ver/Descargar Respaldo]({url_cloudinary})")
+            st.markdown("---")
     else:
-        st.info("ℹ️ Aún no hay documentos PDF o DOCX registrados en el sistema.")
+        st.warning("⚠️ No se encontraron documentos locales ni registros en la base de datos. Genere una nueva OT para visualizarla aquí.")
