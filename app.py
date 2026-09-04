@@ -66,10 +66,6 @@ CAUSAS_OPCIONES = [
     "Sobrecalentamiento", "Fuga hidráulica/neumática", "Falla eléctrica/cortocircuito", 
     "Atascamiento / Muestra atascada", "Falta de mantenimiento preventivo", "Pieza defectuosa", "Llanta"
 ]
-MOTIVOS_PENDIENTE_OPCIONES = [
-    "Cambio de turno", "Falta de repuestos / insumos", "Falta de herramientas especializadas", 
-    "Priorización de otra urgencia", "Espera de enfriamiento / parada de máquina"
-]
 
 MAQUINAS_DICT = {
     "Cat 5": "Cat 5", "Cat 7 (topadora)": "Cat 7", "Cat 8": "Cat 8", "Cat 9": "Cat 9", "Cat 10": "Cat 10", "Cat 11": "Cat 11",
@@ -103,11 +99,9 @@ def obtener_siguiente_ot():
 
 def convertir_docx_a_pdf(ruta_docx, ruta_pdf):
     try:
-        # Intenta la conversión únicamente si el entorno dispone de LibreOffice
         subprocess.run(["soffice", "--headless", "--convert-to", "pdf", ruta_docx], check=True)
         return True
     except Exception:
-        # En entornos cloud como Render se conserva el archivo Word si no hay conversor disponible
         return False
 
 def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
@@ -141,12 +135,13 @@ def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
         doc.save(ruta_salida_docx)
 
 # ==========================================
-# CONFIGURACIÓN VISUAL Y APP NICEGUI
+# CONSTRUCCIÓN DE LA INTERFAZ DENTRO DE UNA FUNCIÓN
 # ==========================================
-ui.colors(primary='#A61C1C')
 
 @ui.page('/')
 def main_page():
+    ui.colors(primary='#A61C1C')
+
     # Encabezado Principal
     with ui.header().classes('bg-red-800 text-white flex justify-between items-center p-4'):
         ui.label('YAGUARETE PAPELES - Gestión OT').classes('text-xl font-bold')
@@ -161,9 +156,7 @@ def main_page():
 
     with ui.tab_panels(tabs, value=tab_cargar).classes('w-full p-4'):
         
-        # ----------------------------------------------------
-        # TAB 1: CARGAR ORDEN DE SERVICIO
-        # ----------------------------------------------------
+        # TAB 1: CARGAR ORDEN
         with ui.tab_panel(tab_cargar):
             ui.label('📋 Registro de Orden de Servicio').classes('text-2xl font-bold text-red-800 mb-4')
             
@@ -185,7 +178,6 @@ def main_page():
                 in_materiales = ui.textarea('Materiales / Repuestos Utilizados').classes('w-full mt-2')
                 in_observaciones = ui.textarea('Observaciones Generales').classes('w-full mt-2')
 
-                # Botones de descarga (Ocultos inicialmente)
                 row_descarga = ui.row().classes('w-full my-2')
                 with row_descarga:
                     btn_download_doc = ui.button('📥 Descargar Documento').classes('bg-red-800 text-white')
@@ -214,12 +206,10 @@ def main_page():
                         "fecha_de_entrega": in_fecha_ent.value, "observaciones": in_observaciones.value
                     }
 
-                    # Rellenar Word y convertir
                     rellenar_plantilla(datos_docx, [], ruta_docx)
                     se_convertio = convertir_docx_a_pdf(ruta_docx, ruta_pdf)
                     archivo_final = ruta_pdf if se_convertio and os.path.exists(ruta_pdf) else ruta_docx
 
-                    # Guardar en Excel
                     df_ex = pd.read_excel(EXCEL_FILE)
                     nueva_fila = {
                         "Num_OT": num_ot_curr, "Fecha_Registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -233,16 +223,13 @@ def main_page():
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    # Subida a Cloudinary
                     respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final)
 
-                    # Habilitar Descarga
                     btn_download_doc.on_click(lambda: ui.download(archivo_final))
                     btn_download_doc.set_visibility(True)
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
 
-                    # Limpiar Campos
                     in_descripcion.value = ''
                     in_materiales.value = ''
                     in_observaciones.value = ''
@@ -250,9 +237,7 @@ def main_page():
 
                 ui.button('💾 Guardar y Registrar Orden', on_click=procesar_guardado).classes('w-full bg-red-800 text-white font-bold my-2')
 
-        # ----------------------------------------------------
-        # TAB 2: TRABAJOS PENDIENTES
-        # ----------------------------------------------------
+        # TAB 2: PENDIENTES
         with ui.tab_panel(tab_pendientes):
             ui.label('⏳ Gestor de Trabajos Pendientes').classes('text-2xl font-bold text-red-800 mb-4')
             
@@ -274,9 +259,7 @@ def main_page():
             ui.button('🔄 Refrescar Pendientes', on_click=refrescar_pendientes).classes('mb-2')
             refrescar_pendientes()
 
-        # ----------------------------------------------------
         # TAB 3: HISTORIAL
-        # ----------------------------------------------------
         with ui.tab_panel(tab_historial):
             ui.label('📂 Historial de Documentos Generados').classes('text-2xl font-bold text-red-800 mb-4')
             
@@ -296,5 +279,5 @@ def main_page():
             ui.button('🔄 Actualizar Lista', on_click=refrescar_historial).classes('mb-2')
             refrescar_historial()
 
-# Ejecución en puerto 8080 para Render
+# Ejecución en el puerto 8080 configurado para Render
 ui.run(port=8080, title="Yaguarete OT")
