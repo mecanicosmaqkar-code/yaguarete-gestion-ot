@@ -58,6 +58,9 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
 # ==========================================
 EXCEL_FILE = "registro_ordenes_servicio.xlsx"
 PLANTILLA_FILE = "plantilla_ot.docx"
+TEMP_IMG_DIR = "temp_images"
+
+os.makedirs(TEMP_IMG_DIR, exist_ok=True)
 
 AREAS = ["Papelote", "Caldera", "Expedición", "Químicos", "Mecánicos", "Km4"]
 TECNICOS_OPCIONES = ["Ivan Sosa", "Néstor Medina", "Gerardo Maidana", "Cristian Alvarenga"]
@@ -135,24 +138,28 @@ def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
         doc.save(ruta_salida_docx)
 
 # ==========================================
-# CONSTRUCCIÓN DE LA INTERFAZ DENTRO DE UNA FUNCIÓN
+# INTERFAZ PRINCIPAL
 # ==========================================
 
 @ui.page('/')
 def main_page():
     ui.colors(primary='#A61C1C')
+    
+    # Lista local para rastrear fotos cargadas en la sesión activa
+    fotos_cargadas_temp = []
 
-    # Encabezado Principal
-    with ui.header().classes('bg-red-800 text-white flex justify-between items-center p-4'):
-        ui.label('YAGUARETE PAPELES - Gestión OT').classes('text-xl font-bold')
-
-    # Menú Lateral
-    with ui.left_drawer(value=True).classes('bg-gray-100 p-2'):
+    # 1. Menú Lateral Drawer
+    with ui.left_drawer(value=False).classes('bg-gray-100 p-2') as left_drawer:
         ui.label('Navegación').classes('font-bold text-gray-700 m-2')
         with ui.tabs().props('vertical').classes('w-full') as tabs:
             tab_cargar = ui.tab('📋 Cargar OT')
             tab_pendientes = ui.tab('⏳ Trabajos Pendientes')
             tab_historial = ui.tab('📂 Historial PDF')
+
+    # 2. Encabezado con Botón de Tres Rayas (Menú)
+    with ui.header().classes('bg-red-800 text-white flex items-center p-4 gap-4'):
+        ui.button(icon='menu', on_click=lambda: left_drawer.toggle()).props('flat color=white')
+        ui.label('YAGUARETE PAPELES - Gestión OT').classes('text-xl font-bold')
 
     with ui.tab_panels(tabs, value=tab_cargar).classes('w-full p-4'):
         
@@ -177,6 +184,23 @@ def main_page():
                 in_causas = ui.select(CAUSAS_OPCIONES, multiple=True, label='Causas Estándar').classes('w-full mt-2')
                 in_materiales = ui.textarea('Materiales / Repuestos Utilizados').classes('w-full mt-2')
                 in_observaciones = ui.textarea('Observaciones Generales').classes('w-full mt-2')
+
+                # Componente para Subir Fotografías
+                ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
+                
+                def manejar_subida_imagen(e):
+                    path_destino = os.path.join(TEMP_IMG_DIR, e.name)
+                    with open(path_destino, 'wb') as f:
+                        f.write(e.content.read())
+                    fotos_cargadas_temp.append(path_destino)
+                    ui.notify(f'📷 Imagen subida: {e.name}', type='positive')
+
+                ui.upload(
+                    label='Seleccionar o capturar fotos',
+                    multiple=True,
+                    auto_upload=True,
+                    on_upload=manejar_subida_imagen
+                ).props('accept="image/*" capture="environment"').classes('w-full mt-2')
 
                 row_descarga = ui.row().classes('w-full my-2')
                 with row_descarga:
@@ -206,7 +230,8 @@ def main_page():
                         "fecha_de_entrega": in_fecha_ent.value, "observaciones": in_observaciones.value
                     }
 
-                    rellenar_plantilla(datos_docx, [], ruta_docx)
+                    # Rellenar Word pasando la lista de imágenes subidas
+                    rellenar_plantilla(datos_docx, fotos_cargadas_temp, ruta_docx)
                     se_convertio = convertir_docx_a_pdf(ruta_docx, ruta_pdf)
                     archivo_final = ruta_pdf if se_convertio and os.path.exists(ruta_pdf) else ruta_docx
 
@@ -223,19 +248,22 @@ def main_page():
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final)
+                    # Respaldo en Cloudinary (documento + imágenes)
+                    respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_cargadas_temp)
 
                     btn_download_doc.on_click(lambda: ui.download(archivo_final))
                     btn_download_doc.set_visibility(True)
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
 
+                    # Limpieza del formulario
                     in_descripcion.value = ''
                     in_materiales.value = ''
                     in_observaciones.value = ''
+                    fotos_cargadas_temp.clear()
                     in_num_ot.value = obtener_siguiente_ot()
 
-                ui.button('💾 Guardar y Registrar Orden', on_click=procesar_guardado).classes('w-full bg-red-800 text-white font-bold my-2')
+                ui.button('💾 Guardar y Registrar Orden', on_click=procesar_guardado).classes('w-full bg-red-800 text-white font-bold my-4')
 
         # TAB 2: PENDIENTES
         with ui.tab_panel(tab_pendientes):
@@ -279,5 +307,4 @@ def main_page():
             ui.button('🔄 Actualizar Lista', on_click=refrescar_historial).classes('mb-2')
             refrescar_historial()
 
-# Ejecución en el puerto 8080 configurado para Render
 ui.run(port=8080, title="Yaguarete OT")
