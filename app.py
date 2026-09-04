@@ -304,9 +304,9 @@ def main_page():
 
         # TAB 4: ESTADÍSTICAS
         with ui.tab_panel(tab_estadisticas):
-            ui.label('📊 Indicadores de Gestión OT').classes('text-2xl font-bold text-red-800 mb-4')
+            ui.label('📊 Panel de Estadísticas y Análisis de Mantenimiento').classes('text-2xl font-bold text-red-800 mb-4')
 
-            def cargar_estadisticas():
+            def renderizar_estadisticas():
                 container_stats.clear()
                 with container_stats:
                     if not os.path.exists(EXCEL_FILE):
@@ -318,55 +318,141 @@ def main_page():
                         ui.label('El registro de órdenes está vacío.').classes('text-gray-500')
                         return
 
-                    # KPIs principales
-                    total_ot = len(df)
-                    finalizadas = len(df[df['Estado'] == 'FINALIZADO']) if 'Estado' in df.columns else 0
-                    pendientes = len(df[df['Estado'] == 'PENDIENTE']) if 'Estado' in df.columns else 0
+                    # Layout con Filtro Lateral
+                    with ui.row().classes('w-full items-start gap-4 flex-col md:flex-row'):
+                        
+                        # --- BARRA LATERAL ---
+                        with ui.card().classes('w-full md:w-1/4 p-4 bg-gray-50'):
+                            ui.label('🔍 Seleccionar Equipo').classes('font-bold text-lg text-gray-800 mb-2')
+                            
+                            opciones_maquinas = ['TODAS LAS MÁQUINAS'] + sorted([str(m) for m in df['Maquina'].dropna().unique()])
+                            sel_maquina = ui.select(
+                                opciones_maquinas, 
+                                value='TODAS LAS MÁQUINAS', 
+                                label='Filtrar Máquina'
+                            ).classes('w-full')
 
-                    with ui.grid(columns=3).classes('w-full gap-4 mb-6'):
-                        with ui.card().classes('p-4 text-center bg-gray-50'):
-                            ui.label('Total OT').classes('text-sm text-gray-600')
-                            ui.label(str(total_ot)).classes('text-3xl font-bold text-red-800')
-                        with ui.card().classes('p-4 text-center bg-gray-50'):
-                            ui.label('Finalizadas').classes('text-sm text-gray-600')
-                            ui.label(str(finalizadas)).classes('text-3xl font-bold text-green-700')
-                        with ui.card().classes('p-4 text-center bg-gray-50'):
-                            ui.label('Pendientes').classes('text-sm text-gray-600')
-                            ui.label(str(pendientes)).classes('text-3xl font-bold text-yellow-700')
+                            ui.separator().classes('my-4')
+                            ui.label('💡 Indicación:').classes('text-xs font-bold text-gray-500')
+                            ui.label('Selecciona una máquina específica para consultar su historial de trabajos y desgaste particular.').classes('text-xs text-gray-500')
 
-                    # Gráficos con ECharts
-                    with ui.grid(columns=2).classes('w-full gap-4'):
-                        # Gráfico por Área
-                        if 'Area' in df.columns and not df['Area'].dropna().empty:
-                            area_counts = df['Area'].value_counts()
-                            ui.echart({
-                                'title': {'text': 'Órdenes por Área', 'left': 'center'},
-                                'tooltip': {'trigger': 'item'},
-                                'series': [{
-                                    'name': 'Órdenes',
-                                    'type': 'pie',
-                                    'radius': '50%',
-                                    'data': [{'value': int(v), 'name': str(k)} for k, v in area_counts.items()]
-                                }]
-                            }).classes('w-full h-64')
+                        # --- ÁREA CENTRAL ---
+                        contenido_central = ui.column().classes('w-full md:w-3/4')
 
-                        # Gráfico por Técnico
-                        if 'Tecnico_Inicial' in df.columns and not df['Tecnico_Inicial'].dropna().empty:
-                            tec_counts = df['Tecnico_Inicial'].value_counts()
-                            ui.echart({
-                                'title': {'text': 'Órdenes por Técnico', 'left': 'center'},
-                                'tooltip': {'trigger': 'axis'},
-                                'xAxis': {'type': 'category', 'data': [str(k) for k in tec_counts.index]},
-                                'yAxis': {'type': 'value'},
-                                'series': [{
-                                    'data': [int(v) for v in tec_counts.values],
-                                    'type': 'bar',
-                                    'itemStyle': {'color': '#A61C1C'}
-                                }]
-                            }).classes('w-full h-64')
+                        def actualizar_contenido_central(maq_seleccionada):
+                            contenido_central.clear()
+                            
+                            if maq_seleccionada == 'TODAS LAS MÁQUINAS':
+                                df_filtrado = df.copy()
+                                titulo_seccion = "Resumen General de la Flota"
+                            else:
+                                df_filtrado = df[df['Maquina'] == maq_seleccionada]
+                                titulo_seccion = f"Análisis y Diagnóstico: {maq_seleccionada}"
+
+                            with contenido_central:
+                                ui.label(titulo_seccion).classes('text-xl font-bold text-red-800 mb-2')
+
+                                if df_filtrado.empty:
+                                    ui.label('No hay registros disponibles para la selección.').classes('text-gray-500 my-4')
+                                    return
+
+                                # KPIs Rápidos
+                                total_ot = len(df_filtrado)
+                                finalizadas = len(df_filtrado[df_filtrado['Estado'] == 'FINALIZADO']) if 'Estado' in df_filtrado.columns else 0
+                                pendientes = len(df_filtrado[df_filtrado['Estado'] == 'PENDIENTE']) if 'Estado' in df_filtrado.columns else 0
+
+                                with ui.grid(columns=3).classes('w-full gap-2 mb-4'):
+                                    with ui.card().classes('p-3 text-center bg-gray-50'):
+                                        ui.label('Total OT').classes('text-xs text-gray-600')
+                                        ui.label(str(total_ot)).classes('text-2xl font-bold text-red-800')
+                                    with ui.card().classes('p-3 text-center bg-gray-50'):
+                                        ui.label('Finalizadas').classes('text-xs text-gray-600')
+                                        ui.label(str(finalizadas)).classes('text-2xl font-bold text-green-700')
+                                    with ui.card().classes('p-3 text-center bg-gray-50'):
+                                        ui.label('Pendientes').classes('text-xs text-gray-600')
+                                        ui.label(str(pendientes)).classes('text-2xl font-bold text-yellow-700')
+
+                                # 1. ANÁLISIS DE MAYORES FALLAS
+                                if 'Causa_Falla' in df_filtrado.columns and not df_filtrado['Causa_Falla'].dropna().empty:
+                                    causas_list = []
+                                    for c in df_filtrado['Causa_Falla'].dropna():
+                                        causas_list.extend([x.strip() for x in str(c).split(',') if x.strip() != 'N/A'])
+                                    
+                                    if causas_list:
+                                        causas_series = pd.Series(causas_list).value_counts().head(5)
+                                        ui.label('🚨 Fallas y Causas Más Comunes').classes('font-bold text-gray-700 mt-2')
+                                        ui.echart({
+                                            'tooltip': {'trigger': 'axis'},
+                                            'xAxis': {'type': 'value'},
+                                            'yAxis': {'type': 'category', 'data': [str(k) for k in causas_series.index[::-1]]},
+                                            'series': [{
+                                                'data': [int(v) for v in causas_series.values[::-1]],
+                                                'type': 'bar',
+                                                'itemStyle': {'color': '#A61C1C'}
+                                            }]
+                                        }).classes('w-full h-48')
+
+                                # 2. MÁQUINAS CON MAYOR TIEMPO / INTERVENCIONES EN REPARACIÓN
+                                if maq_seleccionada == 'TODAS LAS MÁQUINAS' and 'Maquina' in df.columns:
+                                    if 'Horas_Mantenimiento' in df.columns and df['Horas_Mantenimiento'].fillna(0).sum() > 0:
+                                        tiempo_maq = df.groupby('Maquina')['Horas_Mantenimiento'].sum().nlargest(5)
+                                        label_tiempo = '⏱️ Equipos con Mayor Horas en Reparación'
+                                    else:
+                                        tiempo_maq = df['Maquina'].value_counts().head(5)
+                                        label_tiempo = '⏱️ Equipos con Más Intervenciones/Fallas'
+
+                                    ui.label(label_tiempo).classes('font-bold text-gray-700 mt-4')
+                                    ui.echart({
+                                        'tooltip': {'trigger': 'axis'},
+                                        'xAxis': {'type': 'category', 'data': [str(k) for k in tiempo_maq.index]},
+                                        'yAxis': {'type': 'value'},
+                                        'series': [{
+                                            'data': [float(v) for v in tiempo_maq.values],
+                                            'type': 'bar',
+                                            'itemStyle': {'color': '#D97706'}
+                                        }]
+                                    }).classes('w-full h-48')
+
+                                # 3. REPUESTOS E INSUMOS MÁS UTILIZADOS
+                                if 'Materiales' in df_filtrado.columns and not df_filtrado['Materiales'].dropna().empty:
+                                    mat_list = []
+                                    for m in df_filtrado['Materiales'].dropna():
+                                        mat_list.extend([x.strip().capitalize() for x in str(m).replace('\n', ',').split(',') if x.strip() and x.strip().lower() != 'ninguno'])
+                                    
+                                    if mat_list:
+                                        mat_series = pd.Series(mat_list).value_counts().head(5)
+                                        ui.label('📦 Repuestos e Insumos Más Utilizados').classes('font-bold text-gray-700 mt-4')
+                                        ui.echart({
+                                            'tooltip': {'trigger': 'axis'},
+                                            'xAxis': {'type': 'value'},
+                                            'yAxis': {'type': 'category', 'data': [str(k) for k in mat_series.index[::-1]]},
+                                            'series': [{
+                                                'data': [int(v) for v in mat_series.values[::-1]],
+                                                'type': 'bar',
+                                                'itemStyle': {'color': '#059669'}
+                                            }]
+                                        }).classes('w-full h-48')
+
+                                # 4. HISTORIAL DE TRABAJOS DE LA MÁQUINA
+                                ui.label('📜 Historial de Trabajos e Intervenciones').classes('font-bold text-gray-700 mt-6 mb-2')
+                                
+                                with ui.card().classes('w-full p-2 max-h-80 overflow-y-auto'):
+                                    for _, row in df_filtrado.sort_values(by='Fecha_Registro', ascending=False).iterrows():
+                                        estado_color = 'text-green-700' if row.get('Estado') == 'FINALIZADO' else 'text-yellow-700'
+                                        with ui.column().classes('w-full p-2 border-b text-sm'):
+                                            with ui.row().classes('w-full justify-between font-bold'):
+                                                ui.label(f"OT: {row.get('Num_OT', 'N/A')} | Fecha: {str(row.get('Fecha_Registro', 'N/A'))[:10]}")
+                                                ui.label(f"[{row.get('Estado', 'N/A')}]").classes(estado_color)
+                                            ui.label(f"🔧 Máquina: {row.get('Maquina', 'N/A')} | Técnico: {row.get('Tecnico_Inicial', 'N/A')} | Horómetro: {row.get('Horometro', 0)}")
+                                            ui.label(f"📝 Servicio: {row.get('Descripcion', 'Sin descripción')}")
+                                            if pd.notna(row.get('Materiales')) and str(row.get('Materiales')).strip():
+                                                ui.label(f"📦 Materiales: {row.get('Materiales')}").classes('text-xs text-green-800 font-semibold')
+
+                        sel_maquina.on('update:model-value', lambda e: actualizar_contenido_central(e.args))
+                        actualizar_contenido_central('TODAS LAS MÁQUINAS')
 
             container_stats = ui.column().classes('w-full')
-            ui.button('🔄 Actualizar Estadísticas', on_click=cargar_estadisticas).classes('mb-4')
-            cargar_estadisticas()
+            ui.button('🔄 Refrescar Datos', on_click=renderizar_estadisticas).classes('mb-4 bg-red-800 text-white')
+            renderizar_estadisticas()
 
 ui.run(port=8080, title="Yaguarete OT")
