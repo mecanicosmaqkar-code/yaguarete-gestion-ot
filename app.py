@@ -318,7 +318,7 @@ def main_page():
                         ui.label('El registro de órdenes está vacío.').classes('text-gray-500')
                         return
 
-                    # KPIs
+                    # KPIs principales
                     total_ot = len(df)
                     finalizadas = len(df[df['Estado'] == 'FINALIZADO']) if 'Estado' in df.columns else 0
                     pendientes = len(df[df['Estado'] == 'PENDIENTE']) if 'Estado' in df.columns else 0
@@ -334,25 +334,35 @@ def main_page():
                             ui.label('Pendientes').classes('text-sm text-gray-600')
                             ui.label(str(pendientes)).classes('text-3xl font-bold text-yellow-700')
 
-                    # Gráficos
+                    # Gráficos con ECharts
                     with ui.grid(columns=2).classes('w-full gap-4'):
-                        # OT por Área
-                        if 'Area' in df.columns:
+                        # Gráfico por Área
+                        if 'Area' in df.columns and not df['Area'].dropna().empty:
                             area_counts = df['Area'].value_counts()
-                            ui.chart({
-                                'title': {'text': 'Órdenes por Área'},
-                                'chart': {'type': 'pie'},
-                                'series': [{'name': 'Órdenes', 'data': [{'name': k, 'y': int(v)} for k, v in area_counts.items()]}]
+                            ui.echart({
+                                'title': {'text': 'Órdenes por Área', 'left': 'center'},
+                                'tooltip': {'trigger': 'item'},
+                                'series': [{
+                                    'name': 'Órdenes',
+                                    'type': 'pie',
+                                    'radius': '50%',
+                                    'data': [{'value': int(v), 'name': str(k)} for k, v in area_counts.items()]
+                                }]
                             }).classes('w-full h-64')
 
-                        # OT por Técnico
-                        if 'Tecnico_Inicial' in df.columns:
+                        # Gráfico por Técnico
+                        if 'Tecnico_Inicial' in df.columns and not df['Tecnico_Inicial'].dropna().empty:
                             tec_counts = df['Tecnico_Inicial'].value_counts()
-                            ui.chart({
-                                'title': {'text': 'Órdenes por Técnico'},
-                                'chart': {'type': 'column'},
-                                'xAxis': {'categories': list(tec_counts.index)},
-                                'series': [{'name': 'Cantidad', 'data': [int(v) for v in tec_counts.values]}]
+                            ui.echart({
+                                'title': {'text': 'Órdenes por Técnico', 'left': 'center'},
+                                'tooltip': {'trigger': 'axis'},
+                                'xAxis': {'type': 'category', 'data': [str(k) for k in tec_counts.index]},
+                                'yAxis': {'type': 'value'},
+                                'series': [{
+                                    'data': [int(v) for v in tec_counts.values],
+                                    'type': 'bar',
+                                    'itemStyle': {'color': '#A61C1C'}
+                                }]
                             }).classes('w-full h-64')
 
             container_stats = ui.column().classes('w-full')
