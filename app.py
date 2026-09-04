@@ -137,6 +137,19 @@ def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
         doc.render(contexto)
         doc.save(ruta_salida_docx)
 
+def buscar_archivo_ot(num_ot):
+    """Busca localmente un archivo PDF o DOCX que contenga el número de OT especificado."""
+    archivos = os.listdir('.')
+    # Prioridad PDF
+    for f in archivos:
+        if num_ot in f and f.endswith('.pdf'):
+            return f
+    # Alternativa DOCX
+    for f in archivos:
+        if num_ot in f and f.endswith('.docx') and f != PLANTILLA_FILE:
+            return f
+    return None
+
 # ==========================================
 # INTERFAZ PRINCIPAL
 # ==========================================
@@ -334,7 +347,7 @@ def main_page():
 
                             ui.separator().classes('my-4')
                             ui.label('💡 Indicación:').classes('text-xs font-bold text-gray-500')
-                            ui.label('Selecciona una máquina específica para consultar su historial de trabajos y desgaste particular.').classes('text-xs text-gray-500')
+                            ui.label('Selecciona una máquina específica para consultar su historial de trabajos y descargar sus PDF asociados.').classes('text-xs text-gray-500')
 
                         # --- ÁREA CENTRAL ---
                         contenido_central = ui.column().classes('w-full md:w-3/4')
@@ -433,16 +446,30 @@ def main_page():
                                             }]
                                         }).classes('w-full h-48')
 
-                                # 4. HISTORIAL DE TRABAJOS DE LA MÁQUINA
+                                # 4. HISTORIAL DE TRABAJOS DE LA MÁQUINA CON DESCARGA DE PDF
                                 ui.label('📜 Historial de Trabajos e Intervenciones').classes('font-bold text-gray-700 mt-6 mb-2')
                                 
-                                with ui.card().classes('w-full p-2 max-h-80 overflow-y-auto'):
+                                with ui.card().classes('w-full p-2 max-h-96 overflow-y-auto'):
                                     for _, row in df_filtrado.sort_values(by='Fecha_Registro', ascending=False).iterrows():
+                                        num_ot_val = str(row.get('Num_OT', ''))
+                                        archivo_encontrado = buscar_archivo_ot(num_ot_val) if num_ot_val else None
+                                        
                                         estado_color = 'text-green-700' if row.get('Estado') == 'FINALIZADO' else 'text-yellow-700'
                                         with ui.column().classes('w-full p-2 border-b text-sm'):
-                                            with ui.row().classes('w-full justify-between font-bold'):
-                                                ui.label(f"OT: {row.get('Num_OT', 'N/A')} | Fecha: {str(row.get('Fecha_Registro', 'N/A'))[:10]}")
-                                                ui.label(f"[{row.get('Estado', 'N/A')}]").classes(estado_color)
+                                            with ui.row().classes('w-full justify-between items-center font-bold'):
+                                                ui.label(f"OT: {num_ot_val} | Fecha: {str(row.get('Fecha_Registro', 'N/A'))[:10]}")
+                                                
+                                                with ui.row().classes('items-center gap-2'):
+                                                    ui.label(f"[{row.get('Estado', 'N/A')}]").classes(estado_color)
+                                                    # Botón dinámico de descarga PDF/DOCX
+                                                    if archivo_encontrado:
+                                                        ui.button(
+                                                            '📥 PDF', 
+                                                            on_click=lambda a=archivo_encontrado: ui.download(a)
+                                                        ).props('dense size=sm color=red').classes('text-xs')
+                                                    else:
+                                                        ui.label('No PDF').classes('text-xs text-gray-400')
+
                                             ui.label(f"🔧 Máquina: {row.get('Maquina', 'N/A')} | Técnico: {row.get('Tecnico_Inicial', 'N/A')} | Horómetro: {row.get('Horometro', 0)}")
                                             ui.label(f"📝 Servicio: {row.get('Descripcion', 'Sin descripción')}")
                                             if pd.notna(row.get('Materiales')) and str(row.get('Materiales')).strip():
