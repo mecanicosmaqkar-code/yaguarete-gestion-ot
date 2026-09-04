@@ -14,43 +14,56 @@ CLOUD_NAME = "hihbvdgg"
 UPLOAD_PRESET = "yaguarete_preset"
 
 def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
-    try:
-        url_doc = None
-        urls_fotos = []
+    """
+    Suba archivos y fotos a Cloudinary usando Unsigned Upload.
+    Maneja excepciones y retorna las URLs públicas seguras.
+    """
+    url_doc = None
+    urls_fotos = []
 
+    try:
+        # Subir Documento (PDF o DOCX)
         if os.path.exists(ruta_archivo):
+            # Endpoint raw para archivos binarios (PDF/DOCX)
+            endpoint_url = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/raw/upload"
+            
             with open(ruta_archivo, "rb") as file_to_upload:
-                response = requests.post(
-                    f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/raw/upload",
-                    data={
-                        "upload_preset": UPLOAD_PRESET,
-                        "folder": f"Ordenes_de_Trabajo/OT_{num_ot}",
-                        "public_id": f"OT_{num_ot}_Documento"
-                    },
-                    files={"file": file_to_upload}
-                )
+                payload = {
+                    "upload_preset": UPLOAD_PRESET,
+                    "folder": f"Ordenes_de_Trabajo/OT_{num_ot}"
+                }
+                files = {"file": (os.path.basename(ruta_archivo), file_to_upload)}
+                
+                response = requests.post(endpoint_url, data=payload, files=files)
+                
                 if response.status_code == 200:
                     url_doc = response.json().get("secure_url")
+                    print(f"✅ Documento respaldado exitosamente en Cloudinary: {url_doc}")
+                else:
+                    print(f"❌ Error Cloudinary Documento [{response.status_code}]: {response.text}")
 
+        # Subir Fotografías
         if fotos_subidas:
+            endpoint_foto_url = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/image/upload"
             for i, foto_path in enumerate(fotos_subidas, start=1):
                 if os.path.exists(foto_path):
                     with open(foto_path, "rb") as foto_file:
-                        response_foto = requests.post(
-                            f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/image/upload",
-                            data={
-                                "upload_preset": UPLOAD_PRESET,
-                                "folder": f"Ordenes_de_Trabajo/OT_{num_ot}",
-                                "public_id": f"Foto_{i}_{num_ot}"
-                            },
-                            files={"file": foto_file}
-                        )
-                        if response_foto.status_code == 200:
-                            urls_fotos.append(response_foto.json().get("secure_url"))
+                        payload_foto = {
+                            "upload_preset": UPLOAD_PRESET,
+                            "folder": f"Ordenes_de_Trabajo/OT_{num_ot}"
+                        }
+                        files_foto = {"file": (os.path.basename(foto_path), foto_file)}
+                        
+                        resp_foto = requests.post(endpoint_foto_url, data=payload_foto, files=files_foto)
+                        if resp_foto.status_code == 200:
+                            urls_fotos.append(resp_foto.json().get("secure_url"))
+                        else:
+                            print(f"❌ Error Cloudinary Imagen [{resp_foto.status_code}]: {resp_foto.text}")
 
         return url_doc, urls_fotos
+
     except Exception as e:
-        print(f"Error al subir respaldo a Cloudinary: {e}")
+        print(f"💥 Excepción al subir a Cloudinary: {e}")
         return None, []
 
 # ==========================================
@@ -82,7 +95,7 @@ columnas_excel = [
     "Num_OT", "Fecha_Registro", "Estado", "Area", "Codigo_Maq", "Maquina", "Horometro",
     "Tecnico_Inicial", "Tecnico_Final", "Descripcion", "Tipo_Mantenimiento", "Horas_Mantenimiento", "Prioridad", 
     "Causa_Falla", "Categoria_Falla_AI", "Motivo_Pendiente", "Materiales", "Insumo_Cantidad",
-    "Fecha_Inicial", "Hora_Final", "Fecha_Entrega", "Observaciones"
+    "Fecha_Inicial", "Hora_Final", "Fecha_Entrega", "Observaciones", "URL_Cloudinary"
 ]
 
 if not os.path.exists(EXCEL_FILE):
@@ -138,15 +151,16 @@ def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
         doc.save(ruta_salida_docx)
 
 def buscar_archivo_ot(num_ot):
-    """Busca localmente un archivo PDF o DOCX que contenga el número de OT especificado."""
+    """Busca en el directorio local cualquier archivo que contenga la cadena Num_OT."""
+    if not num_ot or pd.isna(num_ot):
+        return None
+    num_ot_clean = str(num_ot).strip()
     archivos = os.listdir('.')
-    # Prioridad PDF
     for f in archivos:
-        if num_ot in f and f.endswith('.pdf'):
+        if num_ot_clean in f and f.endswith('.pdf'):
             return f
-    # Alternativa DOCX
     for f in archivos:
-        if num_ot in f and f.endswith('.docx') and f != PLANTILLA_FILE:
+        if num_ot_clean in f and f.endswith('.docx') and f != PLANTILLA_FILE:
             return f
     return None
 
@@ -159,7 +173,6 @@ def main_page():
     ui.colors(primary='#A61C1C')
     fotos_cargadas_temp = []
 
-    # 1. Menú Lateral Drawer
     with ui.left_drawer(value=False).classes('bg-gray-100 p-2') as left_drawer:
         ui.label('Navegación').classes('font-bold text-gray-700 m-2')
         with ui.tabs().props('vertical').classes('w-full') as tabs:
@@ -168,7 +181,6 @@ def main_page():
             tab_historial = ui.tab('📂 Historial PDF')
             tab_estadisticas = ui.tab('📊 Estadísticas')
 
-    # 2. Encabezado con Botón de Tres Rayas
     with ui.header().classes('bg-red-800 text-white flex items-center p-4 gap-4'):
         ui.button(icon='menu', on_click=lambda: left_drawer.toggle()).props('flat color=white')
         ui.label('YAGUARETE PAPELES - Gestión OT').classes('text-xl font-bold')
@@ -225,7 +237,7 @@ def main_page():
 
                     num_ot_curr = in_num_ot.value
                     codigo_m = MAQUINAS_DICT.get(in_maquina.value, "")
-                    nombre_base = f"{in_tecnico.value}_{datetime.now().strftime('%Y-%m-%d')}_{in_maquina.value}_{num_ot_curr}"
+                    nombre_base = f"{in_tecnico.value}_{datetime.now().strftime('%Y-%m-%d')}_{in_maquina.value}_{num_ot_curr}".replace(" ", "_")
                     ruta_docx = f"{nombre_base}.docx"
                     ruta_pdf = f"{nombre_base}.pdf"
 
@@ -245,6 +257,9 @@ def main_page():
                     se_convertio = convertir_docx_a_pdf(ruta_docx, ruta_pdf)
                     archivo_final = ruta_pdf if se_convertio and os.path.exists(ruta_pdf) else ruta_docx
 
+                    # Subida a Cloudinary
+                    url_doc_cloud, _ = respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_cargadas_temp)
+
                     df_ex = pd.read_excel(EXCEL_FILE)
                     nueva_fila = {
                         "Num_OT": num_ot_curr, "Fecha_Registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -254,11 +269,10 @@ def main_page():
                         "Descripcion": in_descripcion.value, "Tipo_Mantenimiento": in_tipo_mant.value,
                         "Prioridad": in_prioridad.value, "Causa_Falla": causa_str, "Materiales": in_materiales.value,
                         "Fecha_Inicial": in_fecha_ini.value, "Fecha_Entrega": in_fecha_ent.value,
-                        "Observaciones": in_observaciones.value
+                        "Observaciones": in_observaciones.value,
+                        "URL_Cloudinary": url_doc_cloud if url_doc_cloud else ""
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
-
-                    respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_cargadas_temp)
 
                     btn_download_doc.on_click(lambda: ui.download(archivo_final))
                     btn_download_doc.set_visibility(True)
@@ -331,10 +345,9 @@ def main_page():
                         ui.label('El registro de órdenes está vacío.').classes('text-gray-500')
                         return
 
-                    # Layout con Filtro Lateral
                     with ui.row().classes('w-full items-start gap-4 flex-col md:flex-row'):
                         
-                        # --- BARRA LATERAL ---
+                        # BARRA LATERAL
                         with ui.card().classes('w-full md:w-1/4 p-4 bg-gray-50'):
                             ui.label('🔍 Seleccionar Equipo').classes('font-bold text-lg text-gray-800 mb-2')
                             
@@ -347,9 +360,9 @@ def main_page():
 
                             ui.separator().classes('my-4')
                             ui.label('💡 Indicación:').classes('text-xs font-bold text-gray-500')
-                            ui.label('Selecciona una máquina específica para consultar su historial de trabajos y descargar sus PDF asociados.').classes('text-xs text-gray-500')
+                            ui.label('Selecciona una máquina para ver sus métricas y descargar los PDF asociados.').classes('text-xs text-gray-500')
 
-                        # --- ÁREA CENTRAL ---
+                        # ÁREA CENTRAL
                         contenido_central = ui.column().classes('w-full md:w-3/4')
 
                         def actualizar_contenido_central(maq_seleccionada):
@@ -369,7 +382,6 @@ def main_page():
                                     ui.label('No hay registros disponibles para la selección.').classes('text-gray-500 my-4')
                                     return
 
-                                # KPIs Rápidos
                                 total_ot = len(df_filtrado)
                                 finalizadas = len(df_filtrado[df_filtrado['Estado'] == 'FINALIZADO']) if 'Estado' in df_filtrado.columns else 0
                                 pendientes = len(df_filtrado[df_filtrado['Estado'] == 'PENDIENTE']) if 'Estado' in df_filtrado.columns else 0
@@ -385,7 +397,7 @@ def main_page():
                                         ui.label('Pendientes').classes('text-xs text-gray-600')
                                         ui.label(str(pendientes)).classes('text-2xl font-bold text-yellow-700')
 
-                                # 1. ANÁLISIS DE MAYORES FALLAS
+                                # 1. ANÁLISIS DE FALLAS
                                 if 'Causa_Falla' in df_filtrado.columns and not df_filtrado['Causa_Falla'].dropna().empty:
                                     causas_list = []
                                     for c in df_filtrado['Causa_Falla'].dropna():
@@ -405,55 +417,15 @@ def main_page():
                                             }]
                                         }).classes('w-full h-48')
 
-                                # 2. MÁQUINAS CON MAYOR TIEMPO / INTERVENCIONES EN REPARACIÓN
-                                if maq_seleccionada == 'TODAS LAS MÁQUINAS' and 'Maquina' in df.columns:
-                                    if 'Horas_Mantenimiento' in df.columns and df['Horas_Mantenimiento'].fillna(0).sum() > 0:
-                                        tiempo_maq = df.groupby('Maquina')['Horas_Mantenimiento'].sum().nlargest(5)
-                                        label_tiempo = '⏱️ Equipos con Mayor Horas en Reparación'
-                                    else:
-                                        tiempo_maq = df['Maquina'].value_counts().head(5)
-                                        label_tiempo = '⏱️ Equipos con Más Intervenciones/Fallas'
-
-                                    ui.label(label_tiempo).classes('font-bold text-gray-700 mt-4')
-                                    ui.echart({
-                                        'tooltip': {'trigger': 'axis'},
-                                        'xAxis': {'type': 'category', 'data': [str(k) for k in tiempo_maq.index]},
-                                        'yAxis': {'type': 'value'},
-                                        'series': [{
-                                            'data': [float(v) for v in tiempo_maq.values],
-                                            'type': 'bar',
-                                            'itemStyle': {'color': '#D97706'}
-                                        }]
-                                    }).classes('w-full h-48')
-
-                                # 3. REPUESTOS E INSUMOS MÁS UTILIZADOS
-                                if 'Materiales' in df_filtrado.columns and not df_filtrado['Materiales'].dropna().empty:
-                                    mat_list = []
-                                    for m in df_filtrado['Materiales'].dropna():
-                                        mat_list.extend([x.strip().capitalize() for x in str(m).replace('\n', ',').split(',') if x.strip() and x.strip().lower() != 'ninguno'])
-                                    
-                                    if mat_list:
-                                        mat_series = pd.Series(mat_list).value_counts().head(5)
-                                        ui.label('📦 Repuestos e Insumos Más Utilizados').classes('font-bold text-gray-700 mt-4')
-                                        ui.echart({
-                                            'tooltip': {'trigger': 'axis'},
-                                            'xAxis': {'type': 'value'},
-                                            'yAxis': {'type': 'category', 'data': [str(k) for k in mat_series.index[::-1]]},
-                                            'series': [{
-                                                'data': [int(v) for v in mat_series.values[::-1]],
-                                                'type': 'bar',
-                                                'itemStyle': {'color': '#059669'}
-                                            }]
-                                        }).classes('w-full h-48')
-
-                                # 4. HISTORIAL DE TRABAJOS DE LA MÁQUINA CON DESCARGA DE PDF
+                                # 2. HISTORIAL Y DESCARGAS
                                 ui.label('📜 Historial de Trabajos e Intervenciones').classes('font-bold text-gray-700 mt-6 mb-2')
                                 
                                 with ui.card().classes('w-full p-2 max-h-96 overflow-y-auto'):
                                     for _, row in df_filtrado.sort_values(by='Fecha_Registro', ascending=False).iterrows():
                                         num_ot_val = str(row.get('Num_OT', ''))
-                                        archivo_encontrado = buscar_archivo_ot(num_ot_val) if num_ot_val else None
-                                        
+                                        archivo_encontrado = buscar_archivo_ot(num_ot_val)
+                                        url_cloudinary = row.get('URL_Cloudinary', '') if pd.notna(row.get('URL_Cloudinary')) else None
+
                                         estado_color = 'text-green-700' if row.get('Estado') == 'FINALIZADO' else 'text-yellow-700'
                                         with ui.column().classes('w-full p-2 border-b text-sm'):
                                             with ui.row().classes('w-full justify-between items-center font-bold'):
@@ -461,19 +433,24 @@ def main_page():
                                                 
                                                 with ui.row().classes('items-center gap-2'):
                                                     ui.label(f"[{row.get('Estado', 'N/A')}]").classes(estado_color)
-                                                    # Botón dinámico de descarga PDF/DOCX
+                                                    
+                                                    # Prioridad 1: Descarga archivo Local
                                                     if archivo_encontrado:
                                                         ui.button(
-                                                            '📥 PDF', 
+                                                            '📥 PDF Local', 
                                                             on_click=lambda a=archivo_encontrado: ui.download(a)
                                                         ).props('dense size=sm color=red').classes('text-xs')
+                                                    # Prioridad 2: Abrir desde Cloudinary
+                                                    elif url_cloudinary and str(url_cloudinary).startswith('http'):
+                                                        ui.button(
+                                                            '☁️ Abrir Cloud', 
+                                                            on_click=lambda u=url_cloudinary: ui.open(u, new_tab=True)
+                                                        ).props('dense size=sm color=blue').classes('text-xs')
                                                     else:
-                                                        ui.label('No PDF').classes('text-xs text-gray-400')
+                                                        ui.label('No disponible').classes('text-xs text-gray-400')
 
                                             ui.label(f"🔧 Máquina: {row.get('Maquina', 'N/A')} | Técnico: {row.get('Tecnico_Inicial', 'N/A')} | Horómetro: {row.get('Horometro', 0)}")
                                             ui.label(f"📝 Servicio: {row.get('Descripcion', 'Sin descripción')}")
-                                            if pd.notna(row.get('Materiales')) and str(row.get('Materiales')).strip():
-                                                ui.label(f"📦 Materiales: {row.get('Materiales')}").classes('text-xs text-green-800 font-semibold')
 
                         sel_maquina.on('update:model-value', lambda e: actualizar_contenido_central(e.args))
                         actualizar_contenido_central('TODAS LAS MÁQUINAS')
