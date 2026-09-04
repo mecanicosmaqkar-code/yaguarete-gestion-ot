@@ -40,7 +40,7 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
         # Subir Fotografías
         if fotos_subidas:
             endpoint_foto_url = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/image/upload"
-            for i, foto_path in enumerate(fotos_subidas, start=1):
+            for foto_path in fotos_subidas:
                 if os.path.exists(foto_path):
                     with open(foto_path, "rb") as foto_file:
                         payload_foto = {
@@ -205,16 +205,16 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
-                # CORRECCIÓN AQUÍ: Se extrae correctamente el nombre y contenido de la imagen
                 def manejar_subida_imagen(e):
                     try:
-                        nombre_archivo = getattr(e, 'name', None) or getattr(e, 'filename', 'imagen.jpg')
+                        nombre_archivo = getattr(e, 'name', None) or getattr(e, 'filename', f"img_{len(fotos_cargadas_temp)}.jpg")
                         contenido = getattr(e, 'content', None)
                         
                         if contenido:
                             path_destino = os.path.join(TEMP_IMG_DIR, nombre_archivo)
+                            data_bytes = contenido.read() if hasattr(contenido, 'read') else contenido
                             with open(path_destino, 'wb') as f:
-                                f.write(contenido.read())
+                                f.write(data_bytes)
                             fotos_cargadas_temp.append(path_destino)
                             ui.notify(f'📷 Imagen subida: {nombre_archivo}', type='positive')
                     except Exception as err:
@@ -226,11 +226,6 @@ def main_page():
                     auto_upload=True,
                     on_upload=manejar_subida_imagen
                 ).props('accept="image/*" capture="environment"').classes('w-full mt-2')
-
-                row_descarga = ui.row().classes('w-full my-2')
-                with row_descarga:
-                    btn_download_doc = ui.button('📥 Descargar Documento').classes('bg-red-800 text-white')
-                    btn_download_doc.set_visibility(False)
 
                 def procesar_guardado():
                     if not in_area.value or not in_maquina.value or not in_tecnico.value:
@@ -264,31 +259,45 @@ def main_page():
 
                     df_ex = pd.read_excel(EXCEL_FILE)
                     nueva_fila = {
-                        "Num_OT": num_ot_curr, "Fecha_Registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "Num_OT": num_ot_curr, 
+                        "Fecha_Registro": datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "Estado": "PENDIENTE" if in_estado.value == "PENDIENTE / A CONTINUAR" else "FINALIZADO",
-                        "Area": in_area.value, "Codigo_Maq": codigo_m, "Maquina": in_maquina.value,
-                        "Horometro": in_horometro.value, "Tecnico_Inicial": in_tecnico.value,
-                        "Descripcion": in_descripcion.value, "Tipo_Mantenimiento": in_tipo_mant.value,
-                        "Prioridad": in_prioridad.value, "Causa_Falla": causa_str, "Materiales": in_materiales.value,
-                        "Fecha_Inicial": in_fecha_ini.value, "Fecha_Entrega": in_fecha_ent.value,
+                        "Area": in_area.value, 
+                        "Codigo_Maq": codigo_m, 
+                        "Maquina": in_maquina.value,
+                        "Horometro": in_horometro.value, 
+                        "Tecnico_Inicial": in_tecnico.value,
+                        "Descripcion": in_descripcion.value, 
+                        "Tipo_Mantenimiento": in_tipo_mant.value,
+                        "Prioridad": in_prioridad.value, 
+                        "Causa_Falla": causa_str, 
+                        "Materiales": in_materiales.value,
+                        "Fecha_Inicial": in_fecha_ini.value, 
+                        "Fecha_Entrega": in_fecha_ent.value,
                         "Observaciones": in_observaciones.value,
                         "URL_Cloudinary": url_doc_cloud if url_doc_cloud else ""
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    # Si hay URL de Cloudinary se abre directamente esa URL, de lo contrario descarga el local
+                    # Navegación hacia el archivo generado
                     if url_doc_cloud:
-                        btn_download_doc.on_click(lambda: ui.open(url_doc_cloud, new_tab=True))
-                    else:
-                        btn_download_doc.on_click(lambda: ui.download(archivo_final))
-                        
-                    btn_download_doc.set_visibility(True)
+                        ui.navigate.to(url_doc_cloud, new_tab=True)
+                    elif os.path.exists(archivo_final):
+                        ui.download(archivo_final)
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
 
+                    # Limpieza del formulario y temporales
                     in_descripcion.value = ''
                     in_materiales.value = ''
                     in_observaciones.value = ''
+                    
+                    for p in fotos_cargadas_temp:
+                        if os.path.exists(p):
+                            try:
+                                os.remove(p)
+                            except Exception:
+                                pass
                     fotos_cargadas_temp.clear()
                     in_num_ot.value = obtener_siguiente_ot()
 
@@ -451,7 +460,7 @@ def main_page():
                                                     elif url_cloudinary and str(url_cloudinary).startswith('http'):
                                                         ui.button(
                                                             '☁️ Abrir PDF', 
-                                                            on_click=lambda u=url_cloudinary: ui.open(u, new_tab=True)
+                                                            on_click=lambda u=url_cloudinary: ui.navigate.to(u, new_tab=True)
                                                         ).props('dense size=sm color=blue').classes('text-xs')
                                                     else:
                                                         ui.label('Sin PDF').classes('text-xs text-gray-400')
