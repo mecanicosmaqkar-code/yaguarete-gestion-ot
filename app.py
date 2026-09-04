@@ -144,8 +144,6 @@ def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
 @ui.page('/')
 def main_page():
     ui.colors(primary='#A61C1C')
-    
-    # Lista local para rastrear fotos cargadas en la sesión activa
     fotos_cargadas_temp = []
 
     # 1. Menú Lateral Drawer
@@ -155,8 +153,9 @@ def main_page():
             tab_cargar = ui.tab('📋 Cargar OT')
             tab_pendientes = ui.tab('⏳ Trabajos Pendientes')
             tab_historial = ui.tab('📂 Historial PDF')
+            tab_estadisticas = ui.tab('📊 Estadísticas')
 
-    # 2. Encabezado con Botón de Tres Rayas (Menú)
+    # 2. Encabezado con Botón de Tres Rayas
     with ui.header().classes('bg-red-800 text-white flex items-center p-4 gap-4'):
         ui.button(icon='menu', on_click=lambda: left_drawer.toggle()).props('flat color=white')
         ui.label('YAGUARETE PAPELES - Gestión OT').classes('text-xl font-bold')
@@ -185,7 +184,6 @@ def main_page():
                 in_materiales = ui.textarea('Materiales / Repuestos Utilizados').classes('w-full mt-2')
                 in_observaciones = ui.textarea('Observaciones Generales').classes('w-full mt-2')
 
-                # Componente para Subir Fotografías
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
                 def manejar_subida_imagen(e):
@@ -230,7 +228,6 @@ def main_page():
                         "fecha_de_entrega": in_fecha_ent.value, "observaciones": in_observaciones.value
                     }
 
-                    # Rellenar Word pasando la lista de imágenes subidas
                     rellenar_plantilla(datos_docx, fotos_cargadas_temp, ruta_docx)
                     se_convertio = convertir_docx_a_pdf(ruta_docx, ruta_pdf)
                     archivo_final = ruta_pdf if se_convertio and os.path.exists(ruta_pdf) else ruta_docx
@@ -248,7 +245,6 @@ def main_page():
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    # Respaldo en Cloudinary (documento + imágenes)
                     respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_cargadas_temp)
 
                     btn_download_doc.on_click(lambda: ui.download(archivo_final))
@@ -256,7 +252,6 @@ def main_page():
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
 
-                    # Limpieza del formulario
                     in_descripcion.value = ''
                     in_materiales.value = ''
                     in_observaciones.value = ''
@@ -306,5 +301,62 @@ def main_page():
             container_historial = ui.column().classes('w-full')
             ui.button('🔄 Actualizar Lista', on_click=refrescar_historial).classes('mb-2')
             refrescar_historial()
+
+        # TAB 4: ESTADÍSTICAS
+        with ui.tab_panel(tab_estadisticas):
+            ui.label('📊 Indicadores de Gestión OT').classes('text-2xl font-bold text-red-800 mb-4')
+
+            def cargar_estadisticas():
+                container_stats.clear()
+                with container_stats:
+                    if not os.path.exists(EXCEL_FILE):
+                        ui.label('No hay datos registrados aún.').classes('text-gray-500')
+                        return
+
+                    df = pd.read_excel(EXCEL_FILE)
+                    if df.empty:
+                        ui.label('El registro de órdenes está vacío.').classes('text-gray-500')
+                        return
+
+                    # KPIs
+                    total_ot = len(df)
+                    finalizadas = len(df[df['Estado'] == 'FINALIZADO']) if 'Estado' in df.columns else 0
+                    pendientes = len(df[df['Estado'] == 'PENDIENTE']) if 'Estado' in df.columns else 0
+
+                    with ui.grid(columns=3).classes('w-full gap-4 mb-6'):
+                        with ui.card().classes('p-4 text-center bg-gray-50'):
+                            ui.label('Total OT').classes('text-sm text-gray-600')
+                            ui.label(str(total_ot)).classes('text-3xl font-bold text-red-800')
+                        with ui.card().classes('p-4 text-center bg-gray-50'):
+                            ui.label('Finalizadas').classes('text-sm text-gray-600')
+                            ui.label(str(finalizadas)).classes('text-3xl font-bold text-green-700')
+                        with ui.card().classes('p-4 text-center bg-gray-50'):
+                            ui.label('Pendientes').classes('text-sm text-gray-600')
+                            ui.label(str(pendientes)).classes('text-3xl font-bold text-yellow-700')
+
+                    # Gráficos
+                    with ui.grid(columns=2).classes('w-full gap-4'):
+                        # OT por Área
+                        if 'Area' in df.columns:
+                            area_counts = df['Area'].value_counts()
+                            ui.chart({
+                                'title': {'text': 'Órdenes por Área'},
+                                'chart': {'type': 'pie'},
+                                'series': [{'name': 'Órdenes', 'data': [{'name': k, 'y': int(v)} for k, v in area_counts.items()]}]
+                            }).classes('w-full h-64')
+
+                        # OT por Técnico
+                        if 'Tecnico_Inicial' in df.columns:
+                            tec_counts = df['Tecnico_Inicial'].value_counts()
+                            ui.chart({
+                                'title': {'text': 'Órdenes por Técnico'},
+                                'chart': {'type': 'column'},
+                                'xAxis': {'categories': list(tec_counts.index)},
+                                'series': [{'name': 'Cantidad', 'data': [int(v) for v in tec_counts.values]}]
+                            }).classes('w-full h-64')
+
+            container_stats = ui.column().classes('w-full')
+            ui.button('🔄 Actualizar Estadísticas', on_click=cargar_estadisticas).classes('mb-4')
+            cargar_estadisticas()
 
 ui.run(port=8080, title="Yaguarete OT")
