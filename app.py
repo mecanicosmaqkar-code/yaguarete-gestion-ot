@@ -103,9 +103,11 @@ def obtener_siguiente_ot():
 
 def convertir_docx_a_pdf(ruta_docx, ruta_pdf):
     try:
+        # Intenta la conversión únicamente si el entorno dispone de LibreOffice
         subprocess.run(["soffice", "--headless", "--convert-to", "pdf", ruta_docx], check=True)
         return True
     except Exception:
+        # En entornos cloud como Render se conserva el archivo Word si no hay conversor disponible
         return False
 
 def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
@@ -186,8 +188,8 @@ def main_page():
                 # Botones de descarga (Ocultos inicialmente)
                 row_descarga = ui.row().classes('w-full my-2')
                 with row_descarga:
-                    btn_download_pdf = ui.button('📥 Descargar PDF').classes('bg-red-800 text-white')
-                    btn_download_pdf.set_visibility(False)
+                    btn_download_doc = ui.button('📥 Descargar Documento').classes('bg-red-800 text-white')
+                    btn_download_doc.set_visibility(False)
 
                 def procesar_guardado():
                     if not in_area.value or not in_maquina.value or not in_tecnico.value:
@@ -235,8 +237,8 @@ def main_page():
                     respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final)
 
                     # Habilitar Descarga
-                    btn_download_pdf.on_click(lambda: ui.download(archivo_final))
-                    btn_download_pdf.set_visibility(True)
+                    btn_download_doc.on_click(lambda: ui.download(archivo_final))
+                    btn_download_doc.set_visibility(True)
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
 
@@ -273,10 +275,10 @@ def main_page():
             refrescar_pendientes()
 
         # ----------------------------------------------------
-        # TAB 3: HISTORIAL PDF
+        # TAB 3: HISTORIAL
         # ----------------------------------------------------
         with ui.tab_panel(tab_historial):
-            ui.label('📂 Historial PDF y Documentos Generados').classes('text-2xl font-bold text-red-800 mb-4')
+            ui.label('📂 Historial de Documentos Generados').classes('text-2xl font-bold text-red-800 mb-4')
             
             def refrescar_historial():
                 container_historial.clear()
