@@ -14,17 +14,12 @@ CLOUD_NAME = "hihbvdgg"
 UPLOAD_PRESET = "yaguarete_preset"
 
 def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
-    """
-    Suba archivos y fotos a Cloudinary usando Unsigned Upload.
-    Maneja excepciones y retorna las URLs públicas seguras.
-    """
     url_doc = None
     urls_fotos = []
 
     try:
         # Subir Documento (PDF o DOCX)
         if os.path.exists(ruta_archivo):
-            # Endpoint raw para archivos binarios (PDF/DOCX)
             endpoint_url = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/raw/upload"
             
             with open(ruta_archivo, "rb") as file_to_upload:
@@ -151,7 +146,6 @@ def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
         doc.save(ruta_salida_docx)
 
 def buscar_archivo_ot(num_ot):
-    """Busca en el directorio local cualquier archivo que contenga la cadena Num_OT."""
     if not num_ot or pd.isna(num_ot):
         return None
     num_ot_clean = str(num_ot).strip()
@@ -211,12 +205,20 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
+                # CORRECCIÓN AQUÍ: Se extrae correctamente el nombre y contenido de la imagen
                 def manejar_subida_imagen(e):
-                    path_destino = os.path.join(TEMP_IMG_DIR, e.name)
-                    with open(path_destino, 'wb') as f:
-                        f.write(e.content.read())
-                    fotos_cargadas_temp.append(path_destino)
-                    ui.notify(f'📷 Imagen subida: {e.name}', type='positive')
+                    try:
+                        nombre_archivo = getattr(e, 'name', None) or getattr(e, 'filename', 'imagen.jpg')
+                        contenido = getattr(e, 'content', None)
+                        
+                        if contenido:
+                            path_destino = os.path.join(TEMP_IMG_DIR, nombre_archivo)
+                            with open(path_destino, 'wb') as f:
+                                f.write(contenido.read())
+                            fotos_cargadas_temp.append(path_destino)
+                            ui.notify(f'📷 Imagen subida: {nombre_archivo}', type='positive')
+                    except Exception as err:
+                        print(f"Error procesando imagen: {err}")
 
                 ui.upload(
                     label='Seleccionar o capturar fotos',
@@ -274,7 +276,12 @@ def main_page():
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    btn_download_doc.on_click(lambda: ui.download(archivo_final))
+                    # Si hay URL de Cloudinary se abre directamente esa URL, de lo contrario descarga el local
+                    if url_doc_cloud:
+                        btn_download_doc.on_click(lambda: ui.open(url_doc_cloud, new_tab=True))
+                    else:
+                        btn_download_doc.on_click(lambda: ui.download(archivo_final))
+                        
                     btn_download_doc.set_visibility(True)
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
@@ -417,7 +424,7 @@ def main_page():
                                             }]
                                         }).classes('w-full h-48')
 
-                                # 2. HISTORIAL Y DESCARGAS
+                                # 2. HISTORIAL Y DESCARGAS DESDE CLOUDINARY
                                 ui.label('📜 Historial de Trabajos e Intervenciones').classes('font-bold text-gray-700 mt-6 mb-2')
                                 
                                 with ui.card().classes('w-full p-2 max-h-96 overflow-y-auto'):
@@ -434,20 +441,20 @@ def main_page():
                                                 with ui.row().classes('items-center gap-2'):
                                                     ui.label(f"[{row.get('Estado', 'N/A')}]").classes(estado_color)
                                                     
-                                                    # Prioridad 1: Descarga archivo Local
+                                                    # Prioridad 1: Descargar archivo local si aún existe
                                                     if archivo_encontrado:
                                                         ui.button(
                                                             '📥 PDF Local', 
                                                             on_click=lambda a=archivo_encontrado: ui.download(a)
                                                         ).props('dense size=sm color=red').classes('text-xs')
-                                                    # Prioridad 2: Abrir desde Cloudinary
+                                                    # Prioridad 2: Abrir archivo subido a Cloudinary
                                                     elif url_cloudinary and str(url_cloudinary).startswith('http'):
                                                         ui.button(
-                                                            '☁️ Abrir Cloud', 
+                                                            '☁️ Abrir PDF', 
                                                             on_click=lambda u=url_cloudinary: ui.open(u, new_tab=True)
                                                         ).props('dense size=sm color=blue').classes('text-xs')
                                                     else:
-                                                        ui.label('No disponible').classes('text-xs text-gray-400')
+                                                        ui.label('Sin PDF').classes('text-xs text-gray-400')
 
                                             ui.label(f"🔧 Máquina: {row.get('Maquina', 'N/A')} | Técnico: {row.get('Tecnico_Inicial', 'N/A')} | Horómetro: {row.get('Horometro', 0)}")
                                             ui.label(f"📝 Servicio: {row.get('Descripcion', 'Sin descripción')}")
