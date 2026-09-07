@@ -1,9 +1,11 @@
 import os
+import io
 import subprocess
 import asyncio
 from datetime import datetime
 import pandas as pd
 import requests
+from PIL import Image
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Cm
 from nicegui import app, run, ui
@@ -175,10 +177,20 @@ def descargar_archivo_local(nombre_archivo):
         ui.notify('⚠️ El archivo local ya no se encuentra en el servidor. Usa la copia de Cloudinary.', type='warning')
 
 # ==========================================
-# FUNCIÓN SÍNCRONA DE TAREA PESADA (CPU BOUND)
+# FUNCIONES SÍNCRONAS DE TAREAS PESADAS (CPU BOUND)
 # ==========================================
+def comprimir_imagen_sync(bytes_imagen, path_destino):
+    """Procesa y comprime la foto en un hilo secundario de CPU."""
+    with Image.open(io.BytesIO(bytes_imagen)) as img:
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        # Ajusta tamaño máximo a 1920x1920 manteniendo aspecto
+        img.thumbnail((1920, 1920))
+        # Guarda optimizado con calidad JPEG 75%
+        img.save(path_destino, "JPEG", optimize=True, quality=75)
+
 def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_pdf, num_ot_curr):
-    """Ejecuta LibreOffice, python-docx y Cloudinary fuera del hilo de NiceGUI"""
+    """Ejecuta LibreOffice, python-docx y Cloudinary fuera del hilo de NiceGUI."""
     rellenar_plantilla(datos_docx, fotos_paths, ruta_docx)
     se_convertio = convertir_docx_a_pdf(ruta_docx, ruta_pdf)
     archivo_final = ruta_pdf if se_convertio and os.path.exists(ruta_pdf) else ruta_docx
@@ -232,13 +244,13 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
-                # MANEJADOR ASÍNCRONO SEGURO DE SUBIDA DE IMÁGENES
+                # MANEJADOR ASÍNCRONO OPTIMIZADO PARA SUBIDA Y COMPRESIÓN DE IMÁGENES
                 async def manejar_subida_imagen(e):
                     try:
-                        nombre_archivo = getattr(e, 'name', None) or f"img_{datetime.now().strftime('%H%M%S_%f')}.jpg"
+                        nombre_archivo = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
                         path_destino = os.path.abspath(os.path.join(TEMP_IMG_DIR, nombre_archivo))
                         
-                        # Manejo asíncrono y seguro de la lectura de bytes
+                        # Extraer los bytes de forma asíncrona
                         if hasattr(e.content, 'read'):
                             if asyncio.iscoroutinefunction(e.content.read):
                                 content = await e.content.read()
@@ -249,12 +261,16 @@ def main_page():
                                     content = e.content.read()
                         else:
                             content = e.content
-                            
-                        with open(path_destino, 'wb') as f:
-                            f.write(content)
+
+                        if not content:
+                            ui.notify('❌ El archivo recibido está vacío', type='negative')
+                            return
+
+                        # Redimensionar y comprimir la foto en un hilo sin congelar el servidor
+                        await run.cpu_bound(comprimir_imagen_sync, content, path_destino)
                             
                         fotos_cargadas_temp.append(path_destino)
-                        ui.notify(f'📷 Imagen subida correctamente: {nombre_archivo}', type='positive')
+                        ui.notify(f'📷 Imagen optimizada y subida correctamente: {nombre_archivo}', type='positive')
                     except Exception as err:
                         print(f"Error procesando subida de imagen: {err}")
                         ui.notify('❌ Error al procesar la imagen', type='negative')
@@ -512,4 +528,9 @@ def main_page():
             ui.button('🔄 Refrescar Datos', on_click=renderizar_estadisticas).classes('mb-4 bg-red-800 text-white')
             renderizar_estadisticas()
 
-ui.run(port=8080, title="Yaguarete OT")
+# Configuración final para incrementar el límite de recepción (30 MB)
+ui.run(
+    port=8080, 
+    title="Yaguarete OT",
+    max_upload_size=31457280  # 30 MB en bytes
+)
