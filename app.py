@@ -70,6 +70,9 @@ TEMP_IMG_DIR = "temp_images"
 
 os.makedirs(TEMP_IMG_DIR, exist_ok=True)
 
+# Servir archivos del directorio actual para descargas directas seguras
+app.add_static_files('/archivos_locales', '.')
+
 AREAS = ["Papelote", "Caldera", "Expedición", "Químicos", "Mecánicos", "Km4"]
 TECNICOS_OPCIONES = ["Ivan Sosa", "Néstor Medina", "Gerardo Maidana", "Cristian Alvarenga"]
 CAUSAS_OPCIONES = [
@@ -157,6 +160,12 @@ def buscar_archivo_ot(num_ot):
         if num_ot_clean in f and f.endswith('.docx') and f != PLANTILLA_FILE:
             return f
     return None
+
+def descargar_archivo_local(nombre_archivo):
+    if os.path.exists(nombre_archivo):
+        ui.download(f'/archivos_locales/{nombre_archivo}')
+    else:
+        ui.notify('⚠️ El archivo local ya no se encuentra en el servidor. Usa la copia de Cloudinary.', type='warning')
 
 # ==========================================
 # INTERFAZ PRINCIPAL
@@ -279,11 +288,11 @@ def main_page():
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    # Navegación hacia el archivo generado
+                    # Navegación priorizada hacia Cloudinary
                     if url_doc_cloud:
                         ui.navigate.to(url_doc_cloud, new_tab=True)
                     elif os.path.exists(archivo_final):
-                        ui.download(archivo_final)
+                        descargar_archivo_local(archivo_final)
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
 
@@ -337,7 +346,7 @@ def main_page():
                         for arch in sorted(archivos, reverse=True):
                             with ui.row().classes('w-full items-center justify-between p-2 border-b'):
                                 ui.label(f"📄 {arch}")
-                                ui.button('Descargar', on_click=lambda a=arch: ui.download(a)).props('flat').classes('text-red-800')
+                                ui.button('Descargar', on_click=lambda a=arch: descargar_archivo_local(a)).props('flat').classes('text-red-800')
                     else:
                         ui.label('No hay documentos generados aún localmente.').classes('text-gray-500')
 
@@ -433,7 +442,7 @@ def main_page():
                                             }]
                                         }).classes('w-full h-48')
 
-                                # 2. HISTORIAL Y DESCARGAS DESDE CLOUDINARY
+                                # 2. HISTORIAL Y DESCARGAS DESDE CLOUDINARY O LOCAL
                                 ui.label('📜 Historial de Trabajos e Intervenciones').classes('font-bold text-gray-700 mt-6 mb-2')
                                 
                                 with ui.card().classes('w-full p-2 max-h-96 overflow-y-auto'):
@@ -450,18 +459,18 @@ def main_page():
                                                 with ui.row().classes('items-center gap-2'):
                                                     ui.label(f"[{row.get('Estado', 'N/A')}]").classes(estado_color)
                                                     
-                                                    # Prioridad 1: Descargar archivo local si aún existe
-                                                    if archivo_encontrado:
-                                                        ui.button(
-                                                            '📥 PDF Local', 
-                                                            on_click=lambda a=archivo_encontrado: ui.download(a)
-                                                        ).props('dense size=sm color=red').classes('text-xs')
-                                                    # Prioridad 2: Abrir archivo subido a Cloudinary
-                                                    elif url_cloudinary and str(url_cloudinary).startswith('http'):
+                                                    # Prioridad 1: Abrir Cloudinary si existe enlace (Nube garantizada)
+                                                    if url_cloudinary and str(url_cloudinary).startswith('http'):
                                                         ui.button(
                                                             '☁️ Abrir PDF', 
                                                             on_click=lambda u=url_cloudinary: ui.navigate.to(u, new_tab=True)
                                                         ).props('dense size=sm color=blue').classes('text-xs')
+                                                    # Prioridad 2: Descarga Local si el archivo aún existe en el servidor
+                                                    elif archivo_encontrado:
+                                                        ui.button(
+                                                            '📥 PDF Local', 
+                                                            on_click=lambda a=archivo_encontrado: descargar_archivo_local(a)
+                                                        ).props('dense size=sm color=red').classes('text-xs')
                                                     else:
                                                         ui.label('Sin PDF').classes('text-xs text-gray-400')
 
