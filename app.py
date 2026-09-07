@@ -1,5 +1,6 @@
 import os
 import subprocess
+import asyncio
 from datetime import datetime
 import pandas as pd
 import requests
@@ -178,16 +179,10 @@ def descargar_archivo_local(nombre_archivo):
 # ==========================================
 def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_pdf, num_ot_curr):
     """Ejecuta LibreOffice, python-docx y Cloudinary fuera del hilo de NiceGUI"""
-    # 1. Rellenar plantilla con imágenes
     rellenar_plantilla(datos_docx, fotos_paths, ruta_docx)
-    
-    # 2. Convertir a PDF
     se_convertio = convertir_docx_a_pdf(ruta_docx, ruta_pdf)
     archivo_final = ruta_pdf if se_convertio and os.path.exists(ruta_pdf) else ruta_docx
-
-    # 3. Respaldar en Cloudinary
     url_doc_cloud, _ = respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_paths)
-
     return archivo_final, url_doc_cloud
 
 # ==========================================
@@ -237,14 +232,24 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
-                def manejar_subida_imagen(e):
+                # MANEJADOR ASÍNCRONO SEGURO DE SUBIDA DE IMÁGENES
+                async def manejar_subida_imagen(e):
                     try:
                         nombre_archivo = getattr(e, 'name', None) or f"img_{datetime.now().strftime('%H%M%S_%f')}.jpg"
                         path_destino = os.path.abspath(os.path.join(TEMP_IMG_DIR, nombre_archivo))
                         
-                        # Extraer bytes correctamente desde NiceGUI
-                        content = e.content.read() if hasattr(e.content, 'read') else e.content
-                        
+                        # Manejo asíncrono y seguro de la lectura de bytes
+                        if hasattr(e.content, 'read'):
+                            if asyncio.iscoroutinefunction(e.content.read):
+                                content = await e.content.read()
+                            else:
+                                content = e.content.read()
+                                if not content and hasattr(e.content, 'seek'):
+                                    e.content.seek(0)
+                                    content = e.content.read()
+                        else:
+                            content = e.content
+                            
                         with open(path_destino, 'wb') as f:
                             f.write(content)
                             
@@ -286,7 +291,6 @@ def main_page():
                         "fecha_de_entrega": in_fecha_ent.value, "observaciones": in_observaciones.value
                     }
 
-                    # Ejecución desacoplada en otro hilo para evitar congelamiento de sockets y KeyError
                     fotos_copia = list(fotos_cargadas_temp)
                     archivo_final, url_doc_cloud = await run.cpu_bound(
                         generar_documento_y_respaldar_sync,
@@ -320,7 +324,6 @@ def main_page():
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    # Navegación y descarga
                     if url_doc_cloud:
                         ui.navigate.to(url_doc_cloud, new_tab=True)
                     elif os.path.exists(archivo_final):
@@ -328,7 +331,6 @@ def main_page():
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
 
-                    # Limpieza del formulario y archivos temporales de imágenes
                     in_descripcion.value = ''
                     in_materiales.value = ''
                     in_observaciones.value = ''
@@ -404,7 +406,6 @@ def main_page():
 
                     with ui.row().classes('w-full items-start gap-4 flex-col md:flex-row'):
                         
-                        # BARRA LATERAL
                         with ui.card().classes('w-full md:w-1/4 p-4 bg-gray-50'):
                             ui.label('🔍 Seleccionar Equipo').classes('font-bold text-lg text-gray-800 mb-2')
                             
@@ -419,7 +420,6 @@ def main_page():
                             ui.label('💡 Indicación:').classes('text-xs font-bold text-gray-500')
                             ui.label('Selecciona una máquina para ver sus métricas y descargar los PDF asociados.').classes('text-xs text-gray-500')
 
-                        # ÁREA CENTRAL
                         contenido_central = ui.column().classes('w-full md:w-3/4')
 
                         def actualizar_contenido_central(maq_seleccionada):
@@ -454,7 +454,6 @@ def main_page():
                                         ui.label('Pendientes').classes('text-xs text-gray-600')
                                         ui.label(str(pendientes)).classes('text-2xl font-bold text-yellow-700')
 
-                                # 1. ANÁLISIS DE FALLAS
                                 if 'Causa_Falla' in df_filtrado.columns and not df_filtrado['Causa_Falla'].dropna().empty:
                                     causas_list = []
                                     for c in df_filtrado['Causa_Falla'].dropna():
@@ -474,7 +473,6 @@ def main_page():
                                             }]
                                         }).classes('w-full h-48')
 
-                                # 2. HISTORIAL Y DESCARGAS
                                 ui.label('📜 Historial de Trabajos e Intervenciones').classes('font-bold text-gray-700 mt-6 mb-2')
                                 
                                 with ui.card().classes('w-full p-2 max-h-96 overflow-y-auto'):
@@ -491,13 +489,11 @@ def main_page():
                                                 with ui.row().classes('items-center gap-2'):
                                                     ui.label(f"[{row.get('Estado', 'N/A')}]").classes(estado_color)
                                                     
-                                                    # Prioridad 1: Abrir Cloudinary si existe enlace
                                                     if url_cloudinary and str(url_cloudinary).startswith('http'):
                                                         ui.button(
                                                             '☁️ Abrir PDF', 
                                                             on_click=lambda u=url_cloudinary: ui.navigate.to(u, new_tab=True)
                                                         ).props('dense size=sm color=blue').classes('text-xs')
-                                                    # Prioridad 2: Descarga Local si existe
                                                     elif archivo_encontrado:
                                                         ui.button(
                                                             '📥 PDF Local', 
