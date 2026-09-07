@@ -116,7 +116,7 @@ def obtener_siguiente_ot():
 def convertir_docx_a_pdf(ruta_docx, ruta_pdf):
     try:
         cmd = ["soffice", "--headless", "--convert-to", "pdf", ruta_docx]
-        res = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         print("✅ Conversión a PDF exitosa")
         return True
     except Exception as e:
@@ -184,9 +184,7 @@ def comprimir_imagen_sync(bytes_imagen, path_destino):
     with Image.open(io.BytesIO(bytes_imagen)) as img:
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
-        # Ajusta tamaño máximo a 1920x1920 manteniendo aspecto
         img.thumbnail((1920, 1920))
-        # Guarda optimizado con calidad JPEG 75%
         img.save(path_destino, "JPEG", optimize=True, quality=75)
 
 def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_pdf, num_ot_curr):
@@ -244,13 +242,11 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
-                # MANEJADOR ASÍNCRONO OPTIMIZADO PARA SUBIDA Y COMPRESIÓN DE IMÁGENES
                 async def manejar_subida_imagen(e):
                     try:
                         nombre_archivo = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
                         path_destino = os.path.abspath(os.path.join(TEMP_IMG_DIR, nombre_archivo))
                         
-                        # Extraer los bytes de forma asíncrona
                         if hasattr(e.content, 'read'):
                             if asyncio.iscoroutinefunction(e.content.read):
                                 content = await e.content.read()
@@ -266,7 +262,6 @@ def main_page():
                             ui.notify('❌ El archivo recibido está vacío', type='negative')
                             return
 
-                        # Redimensionar y comprimir la foto en un hilo sin congelar el servidor
                         await run.cpu_bound(comprimir_imagen_sync, content, path_destino)
                             
                         fotos_cargadas_temp.append(path_destino)
@@ -280,7 +275,7 @@ def main_page():
                     multiple=True,
                     auto_upload=True,
                     on_upload=manejar_subida_imagen
-                ).props('accept="image/*" capture="environment"').classes('w-full mt-2')
+                ).props('accept="image/*" capture="environment" max-file-size="31457280"').classes('w-full mt-2')
 
                 async def procesar_guardado():
                     if not in_area.value or not in_maquina.value or not in_tecnico.value:
@@ -528,9 +523,8 @@ def main_page():
             ui.button('🔄 Refrescar Datos', on_click=renderizar_estadisticas).classes('mb-4 bg-red-800 text-white')
             renderizar_estadisticas()
 
-# Configuración final para incrementar el límite de recepción (30 MB)
+# Asegurar que el archivo requirements.txt contenga: Pillow, nicegui, pandas, docxtpl, requests, openpyxl
 ui.run(
     port=8080, 
-    title="Yaguarete OT",
-    max_upload_size=31457280  # 30 MB en bytes
+    title="Yaguarete OT"
 )
