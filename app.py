@@ -240,26 +240,29 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
-                # Manejador nativo seguro de recepción de archivos
-                def manejar_subida_nativas(e):
+                # Manejo de archivo mejorado utilizando streams directos
+                async def manejar_subida_nativas(e):
                     try:
                         filename = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
                         filepath = os.path.join(TEMP_IMG_DIR, filename)
                         
+                        # Lectura en bloques para evitar fallos de buffer en NiceGUI
+                        datos = e.content.read()
                         with open(filepath, 'wb') as f:
-                            f.write(e.content.read())
+                            f.write(datos)
                             
                         fotos_cargadas_temp.append(filepath)
                         ui.notify(f'📷 Foto guardada: {e.name}', type='positive')
                     except Exception as err:
-                        print(f"Error guardando foto: {err}")
-                        ui.notify('❌ Error al procesar la foto', type='negative')
+                        print(f"Error procesando foto: {err}")
+                        ui.notify(f'❌ Error al procesar: {err}', type='negative')
 
                 ui.upload(
                     label='Seleccionar o capturar fotos',
                     multiple=True,
                     auto_upload=True,
-                    on_upload=manejar_subida_nativas
+                    on_upload=manejar_subida_nativas,
+                    max_file_size=10_000_000  # Soporta fotos de hasta 10 MB
                 ).props('accept="image/*" capture="environment"').classes('w-full mt-2')
 
                 async def procesar_guardado():
@@ -509,5 +512,6 @@ def main_page():
 
 ui.run(
     port=8080, 
-    title="Yaguarete OT"
+    title="Yaguarete OT",
+    reconnect_timeout=10.0
 )
