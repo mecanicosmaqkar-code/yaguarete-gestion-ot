@@ -9,8 +9,6 @@ from PIL import Image
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Cm
 from nicegui import app, run, ui
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 # ==========================================
 # CONFIGURACIÓN DE CLOUDINARY
@@ -174,29 +172,6 @@ def descargar_archivo_local(nombre_archivo):
     else:
         ui.notify('⚠️ El archivo local ya no se encuentra en el servidor. Usa la copia de Cloudinary.', type='warning')
 
-# ==========================================
-# ENDPOINT HTTP DEDICADO (EVITA WebSocket CRASH)
-# ==========================================
-@app.post('/upload_foto')
-async def endpoint_upload_foto(request: Request):
-    try:
-        form = await request.form()
-        file_obj = form.get('file')
-        if not file_obj:
-            return JSONResponse({'error': 'No file provided'}, status_code=400)
-            
-        filename = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-        filepath = os.path.join(TEMP_IMG_DIR, filename)
-        
-        contents = await file_obj.read()
-        with open(filepath, 'wb') as f:
-            f.write(contents)
-            
-        return JSONResponse({'filepath': filepath, 'filename': filename})
-    except Exception as e:
-        print(f"Error en endpoint HTTP de subida: {e}")
-        return JSONResponse({'error': str(e)}, status_code=500)
-
 def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_pdf, num_ot_curr):
     fotos_optimizadas = []
     for foto_path in fotos_paths:
@@ -265,28 +240,27 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
-                # Función que procesa los archivos subidos mediante HTTP POST directo
-                def manejar_subida_http(e):
+                # Manejador nativo seguro de recepción de archivos
+                def manejar_subida_nativas(e):
                     try:
-                        filepath = e.args.get('response', {}).get('filepath')
-                        filename = e.args.get('response', {}).get('filename')
-                        if filepath and os.path.exists(filepath):
-                            fotos_cargadas_temp.append(filepath)
-                            ui.notify(f'📷 Foto subida con éxito: {filename}', type='positive')
-                        else:
-                            ui.notify('❌ Error al procesar archivo en el servidor', type='negative')
+                        filename = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                        filepath = os.path.join(TEMP_IMG_DIR, filename)
+                        
+                        with open(filepath, 'wb') as f:
+                            f.write(e.content.read())
+                            
+                        fotos_cargadas_temp.append(filepath)
+                        ui.notify(f'📷 Foto guardada: {e.name}', type='positive')
                     except Exception as err:
-                        print(f"Error capturando subida HTTP: {err}")
-                        ui.notify('❌ Error al registrar foto', type='negative')
+                        print(f"Error guardando foto: {err}")
+                        ui.notify('❌ Error al procesar la foto', type='negative')
 
-                # Componente ui.upload apuntado al endpoint HTTP
                 ui.upload(
-                    url='/upload_foto',
                     label='Seleccionar o capturar fotos',
                     multiple=True,
                     auto_upload=True,
-                    on_uploaded=manejar_subida_http
-                ).props('accept="image/*" capture="environment" field-name="file"').classes('w-full mt-2')
+                    on_upload=manejar_subida_nativas
+                ).props('accept="image/*" capture="environment"').classes('w-full mt-2')
 
                 async def procesar_guardado():
                     if not in_area.value or not in_maquina.value or not in_tecnico.value:
@@ -323,7 +297,6 @@ def main_page():
                         num_ot_curr
                     )
 
-                    # Registro en Excel
                     df_ex = pd.read_excel(EXCEL_FILE)
                     nueva_fila = {
                         "Num_OT": num_ot_curr, 
