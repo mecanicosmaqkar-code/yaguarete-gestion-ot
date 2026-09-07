@@ -179,20 +179,27 @@ def descargar_archivo_local(nombre_archivo):
 # ==========================================
 # FUNCIONES SÍNCRONAS DE TAREAS PESADAS (CPU BOUND)
 # ==========================================
-def comprimir_imagen_sync(bytes_imagen, path_destino):
-    """Procesa y comprime la foto en un hilo secundario de CPU."""
-    with Image.open(io.BytesIO(bytes_imagen)) as img:
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        img.thumbnail((1920, 1920))
-        img.save(path_destino, "JPEG", optimize=True, quality=75)
-
 def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_pdf, num_ot_curr):
-    """Ejecuta LibreOffice, python-docx y Cloudinary fuera del hilo de NiceGUI."""
-    rellenar_plantilla(datos_docx, fotos_paths, ruta_docx)
+    """Ejecuta la optimización de imágenes, LibreOffice, python-docx y Cloudinary fuera del hilo principal."""
+    # Redimensionar fotos antes de embeber en el documento Word/PDF
+    fotos_optimizadas = []
+    for foto_path in fotos_paths:
+        try:
+            if os.path.exists(foto_path):
+                with Image.open(foto_path) as img:
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+                    img.thumbnail((1280, 1280))
+                    img.save(foto_path, "JPEG", quality=75, optimize=True)
+                fotos_optimizadas.append(foto_path)
+        except Exception as err:
+            print(f"Error reduciendo foto {foto_path}: {err}")
+            fotos_optimizadas.append(foto_path)
+
+    rellenar_plantilla(datos_docx, fotos_optimizadas, ruta_docx)
     se_convertio = convertir_docx_a_pdf(ruta_docx, ruta_pdf)
     archivo_final = ruta_pdf if se_convertio and os.path.exists(ruta_pdf) else ruta_docx
-    url_doc_cloud, _ = respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_paths)
+    url_doc_cloud, _ = respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_optimizadas)
     return archivo_final, url_doc_cloud
 
 # ==========================================
@@ -247,28 +254,16 @@ def main_page():
                         nombre_archivo = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
                         path_destino = os.path.abspath(os.path.join(TEMP_IMG_DIR, nombre_archivo))
                         
-                        if hasattr(e.content, 'read'):
-                            if asyncio.iscoroutinefunction(e.content.read):
-                                content = await e.content.read()
-                            else:
-                                content = e.content.read()
-                                if not content and hasattr(e.content, 'seek'):
-                                    e.content.seek(0)
-                                    content = e.content.read()
-                        else:
-                            content = e.content
-
-                        if not content:
-                            ui.notify('❌ El archivo recibido está vacío', type='negative')
-                            return
-
-                        await run.cpu_bound(comprimir_imagen_sync, content, path_destino)
+                        data = e.content.read() if hasattr(e.content, 'read') else e.content
+                        
+                        with open(path_destino, 'wb') as f:
+                            f.write(data)
                             
                         fotos_cargadas_temp.append(path_destino)
-                        ui.notify(f'📷 Imagen optimizada y subida correctamente: {nombre_archivo}', type='positive')
+                        ui.notify(f'📷 Foto adjuntada correctamente: {e.name}', type='positive')
                     except Exception as err:
-                        print(f"Error procesando subida de imagen: {err}")
-                        ui.notify('❌ Error al procesar la imagen', type='negative')
+                        print(f"Error guardando imagen subida: {err}")
+                        ui.notify('❌ Error al subir la foto', type='negative')
 
                 ui.upload(
                     label='Seleccionar o capturar fotos',
@@ -282,7 +277,7 @@ def main_page():
                         ui.notify('⚠️ Complete los campos obligatorios (*)', type='warning')
                         return
 
-                    ui.notify('⏳ Generando PDF y respaldando información...', type='info')
+                    ui.notify('⏳ Procesando fotos y generando PDF...', type='info')
 
                     num_ot_curr = in_num_ot.value
                     codigo_m = MAQUINAS_DICT.get(in_maquina.value, "")
@@ -523,7 +518,6 @@ def main_page():
             ui.button('🔄 Refrescar Datos', on_click=renderizar_estadisticas).classes('mb-4 bg-red-800 text-white')
             renderizar_estadisticas()
 
-# Asegurar que el archivo requirements.txt contenga: Pillow, nicegui, pandas, docxtpl, requests, openpyxl
 ui.run(
     port=8080, 
     title="Yaguarete OT"
