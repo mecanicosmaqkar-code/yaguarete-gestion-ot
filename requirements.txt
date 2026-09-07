@@ -1,6 +1,6 @@
+Pillow
 nicegui
 pandas
-openpyxl
-requests
-python-docx
 docxtpl
+requests
+openpyxl
