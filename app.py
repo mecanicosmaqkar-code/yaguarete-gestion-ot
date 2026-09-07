@@ -9,6 +9,8 @@ from PIL import Image
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Cm
 from nicegui import app, run, ui
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 # ==========================================
 # CONFIGURACIÓN DE CLOUDINARY
@@ -21,7 +23,6 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
     urls_fotos = []
 
     try:
-        # Subir Documento (PDF o DOCX)
         if os.path.exists(ruta_archivo):
             endpoint_url = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/raw/upload"
             
@@ -31,7 +32,6 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
                     "folder": f"Ordenes_de_Trabajo/OT_{num_ot}"
                 }
                 files = {"file": (os.path.basename(ruta_archivo), file_to_upload)}
-                
                 response = requests.post(endpoint_url, data=payload, files=files)
                 
                 if response.status_code == 200:
@@ -40,7 +40,6 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
                 else:
                     print(f"❌ Error Cloudinary Documento [{response.status_code}]: {response.text}")
 
-        # Subir Fotografías
         if fotos_subidas:
             endpoint_foto_url = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/image/upload"
             for foto_path in fotos_subidas:
@@ -51,7 +50,6 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
                             "folder": f"Ordenes_de_Trabajo/OT_{num_ot}"
                         }
                         files_foto = {"file": (os.path.basename(foto_path), foto_file)}
-                        
                         resp_foto = requests.post(endpoint_foto_url, data=payload_foto, files=files_foto)
                         if resp_foto.status_code == 200:
                             urls_fotos.append(resp_foto.json().get("secure_url"))
@@ -177,11 +175,29 @@ def descargar_archivo_local(nombre_archivo):
         ui.notify('⚠️ El archivo local ya no se encuentra en el servidor. Usa la copia de Cloudinary.', type='warning')
 
 # ==========================================
-# FUNCIONES SÍNCRONAS DE TAREAS PESADAS (CPU BOUND)
+# ENDPOINT HTTP DEDICADO (EVITA WebSocket CRASH)
 # ==========================================
+@app.post('/upload_foto')
+async def endpoint_upload_foto(request: Request):
+    try:
+        form = await request.form()
+        file_obj = form.get('file')
+        if not file_obj:
+            return JSONResponse({'error': 'No file provided'}, status_code=400)
+            
+        filename = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+        filepath = os.path.join(TEMP_IMG_DIR, filename)
+        
+        contents = await file_obj.read()
+        with open(filepath, 'wb') as f:
+            f.write(contents)
+            
+        return JSONResponse({'filepath': filepath, 'filename': filename})
+    except Exception as e:
+        print(f"Error en endpoint HTTP de subida: {e}")
+        return JSONResponse({'error': str(e)}, status_code=500)
+
 def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_pdf, num_ot_curr):
-    """Ejecuta la optimización de imágenes, LibreOffice, python-docx y Cloudinary fuera del hilo principal."""
-    # Redimensionar fotos antes de embeber en el documento Word/PDF
     fotos_optimizadas = []
     for foto_path in fotos_paths:
         try:
@@ -249,28 +265,28 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
-                async def manejar_subida_imagen(e):
+                # Función que procesa los archivos subidos mediante HTTP POST directo
+                def manejar_subida_http(e):
                     try:
-                        nombre_archivo = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-                        path_destino = os.path.abspath(os.path.join(TEMP_IMG_DIR, nombre_archivo))
-                        
-                        data = e.content.read() if hasattr(e.content, 'read') else e.content
-                        
-                        with open(path_destino, 'wb') as f:
-                            f.write(data)
-                            
-                        fotos_cargadas_temp.append(path_destino)
-                        ui.notify(f'📷 Foto adjuntada correctamente: {e.name}', type='positive')
+                        filepath = e.args.get('response', {}).get('filepath')
+                        filename = e.args.get('response', {}).get('filename')
+                        if filepath and os.path.exists(filepath):
+                            fotos_cargadas_temp.append(filepath)
+                            ui.notify(f'📷 Foto subida con éxito: {filename}', type='positive')
+                        else:
+                            ui.notify('❌ Error al procesar archivo en el servidor', type='negative')
                     except Exception as err:
-                        print(f"Error guardando imagen subida: {err}")
-                        ui.notify('❌ Error al subir la foto', type='negative')
+                        print(f"Error capturando subida HTTP: {err}")
+                        ui.notify('❌ Error al registrar foto', type='negative')
 
+                # Componente ui.upload apuntado al endpoint HTTP
                 ui.upload(
+                    url='/upload_foto',
                     label='Seleccionar o capturar fotos',
                     multiple=True,
                     auto_upload=True,
-                    on_upload=manejar_subida_imagen
-                ).props('accept="image/*" capture="environment" max-file-size="31457280"').classes('w-full mt-2')
+                    on_uploaded=manejar_subida_http
+                ).props('accept="image/*" capture="environment" field-name="file"').classes('w-full mt-2')
 
                 async def procesar_guardado():
                     if not in_area.value or not in_maquina.value or not in_tecnico.value:
