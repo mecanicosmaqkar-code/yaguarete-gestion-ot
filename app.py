@@ -5,7 +5,7 @@ import pandas as pd
 import requests
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Cm
-from nicegui import app, ui
+from nicegui import app, run, ui
 
 # ==========================================
 # CONFIGURACIÓN DE CLOUDINARY
@@ -66,11 +66,10 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
 # ==========================================
 EXCEL_FILE = "registro_ordenes_servicio.xlsx"
 PLANTILLA_FILE = "plantilla_ot.docx"
-TEMP_IMG_DIR = "temp_images"
+TEMP_IMG_DIR = os.path.abspath("temp_images")
 
 os.makedirs(TEMP_IMG_DIR, exist_ok=True)
 
-# Servir archivos del directorio actual para descargas directas seguras
 app.add_static_files('/archivos_locales', '.')
 
 AREAS = ["Papelote", "Caldera", "Expedición", "Químicos", "Mecánicos", "Km4"]
@@ -113,9 +112,12 @@ def obtener_siguiente_ot():
 
 def convertir_docx_a_pdf(ruta_docx, ruta_pdf):
     try:
-        subprocess.run(["soffice", "--headless", "--convert-to", "pdf", ruta_docx], check=True)
+        cmd = ["soffice", "--headless", "--convert-to", "pdf", ruta_docx]
+        res = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print("✅ Conversión a PDF exitosa")
         return True
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ No se pudo convertir a PDF (¿LibreOffice no está instalado?): {e}")
         return False
 
 def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
@@ -124,8 +126,12 @@ def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
         imagenes_inline = []
         if fotos_paths:
             for path in fotos_paths:
-                if os.path.exists(path):
-                    imagenes_inline.append(InlineImage(doc, path, width=Cm(12)))
+                abs_path = os.path.abspath(path)
+                if os.path.exists(abs_path):
+                    try:
+                        imagenes_inline.append(InlineImage(doc, abs_path, width=Cm(12)))
+                    except Exception as err:
+                        print(f"Error procesando imagen para plantilla ({abs_path}): {err}")
 
         contexto = {
             'area': datos_dict.get("area", ""),
@@ -166,6 +172,23 @@ def descargar_archivo_local(nombre_archivo):
         ui.download(f'/archivos_locales/{nombre_archivo}')
     else:
         ui.notify('⚠️ El archivo local ya no se encuentra en el servidor. Usa la copia de Cloudinary.', type='warning')
+
+# ==========================================
+# FUNCIÓN SÍNCRONA DE TAREA PESADA (CPU BOUND)
+# ==========================================
+def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_pdf, num_ot_curr):
+    """Ejecuta LibreOffice, python-docx y Cloudinary fuera del hilo de NiceGUI"""
+    # 1. Rellenar plantilla con imágenes
+    rellenar_plantilla(datos_docx, fotos_paths, ruta_docx)
+    
+    # 2. Convertir a PDF
+    se_convertio = convertir_docx_a_pdf(ruta_docx, ruta_pdf)
+    archivo_final = ruta_pdf if se_convertio and os.path.exists(ruta_pdf) else ruta_docx
+
+    # 3. Respaldar en Cloudinary
+    url_doc_cloud, _ = respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_paths)
+
+    return archivo_final, url_doc_cloud
 
 # ==========================================
 # INTERFAZ PRINCIPAL
@@ -216,18 +239,20 @@ def main_page():
                 
                 def manejar_subida_imagen(e):
                     try:
-                        nombre_archivo = getattr(e, 'name', None) or getattr(e, 'filename', f"img_{len(fotos_cargadas_temp)}.jpg")
-                        contenido = getattr(e, 'content', None)
+                        nombre_archivo = getattr(e, 'name', None) or f"img_{datetime.now().strftime('%H%M%S_%f')}.jpg"
+                        path_destino = os.path.abspath(os.path.join(TEMP_IMG_DIR, nombre_archivo))
                         
-                        if contenido:
-                            path_destino = os.path.join(TEMP_IMG_DIR, nombre_archivo)
-                            data_bytes = contenido.read() if hasattr(contenido, 'read') else contenido
-                            with open(path_destino, 'wb') as f:
-                                f.write(data_bytes)
-                            fotos_cargadas_temp.append(path_destino)
-                            ui.notify(f'📷 Imagen subida: {nombre_archivo}', type='positive')
+                        # Extraer bytes correctamente desde NiceGUI
+                        content = e.content.read() if hasattr(e.content, 'read') else e.content
+                        
+                        with open(path_destino, 'wb') as f:
+                            f.write(content)
+                            
+                        fotos_cargadas_temp.append(path_destino)
+                        ui.notify(f'📷 Imagen subida correctamente: {nombre_archivo}', type='positive')
                     except Exception as err:
-                        print(f"Error procesando imagen: {err}")
+                        print(f"Error procesando subida de imagen: {err}")
+                        ui.notify('❌ Error al procesar la imagen', type='negative')
 
                 ui.upload(
                     label='Seleccionar o capturar fotos',
@@ -236,10 +261,12 @@ def main_page():
                     on_upload=manejar_subida_imagen
                 ).props('accept="image/*" capture="environment"').classes('w-full mt-2')
 
-                def procesar_guardado():
+                async def procesar_guardado():
                     if not in_area.value or not in_maquina.value or not in_tecnico.value:
                         ui.notify('⚠️ Complete los campos obligatorios (*)', type='warning')
                         return
+
+                    ui.notify('⏳ Generando PDF y respaldando información...', type='info')
 
                     num_ot_curr = in_num_ot.value
                     codigo_m = MAQUINAS_DICT.get(in_maquina.value, "")
@@ -259,13 +286,18 @@ def main_page():
                         "fecha_de_entrega": in_fecha_ent.value, "observaciones": in_observaciones.value
                     }
 
-                    rellenar_plantilla(datos_docx, fotos_cargadas_temp, ruta_docx)
-                    se_convertio = convertir_docx_a_pdf(ruta_docx, ruta_pdf)
-                    archivo_final = ruta_pdf if se_convertio and os.path.exists(ruta_pdf) else ruta_docx
+                    # Ejecución desacoplada en otro hilo para evitar congelamiento de sockets y KeyError
+                    fotos_copia = list(fotos_cargadas_temp)
+                    archivo_final, url_doc_cloud = await run.cpu_bound(
+                        generar_documento_y_respaldar_sync,
+                        datos_docx,
+                        fotos_copia,
+                        ruta_docx,
+                        ruta_pdf,
+                        num_ot_curr
+                    )
 
-                    # Subida a Cloudinary
-                    url_doc_cloud, _ = respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_cargadas_temp)
-
+                    # Registro en Excel
                     df_ex = pd.read_excel(EXCEL_FILE)
                     nueva_fila = {
                         "Num_OT": num_ot_curr, 
@@ -288,7 +320,7 @@ def main_page():
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    # Navegación priorizada hacia Cloudinary
+                    # Navegación y descarga
                     if url_doc_cloud:
                         ui.navigate.to(url_doc_cloud, new_tab=True)
                     elif os.path.exists(archivo_final):
@@ -296,7 +328,7 @@ def main_page():
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
 
-                    # Limpieza del formulario y temporales
+                    # Limpieza del formulario y archivos temporales de imágenes
                     in_descripcion.value = ''
                     in_materiales.value = ''
                     in_observaciones.value = ''
@@ -442,7 +474,7 @@ def main_page():
                                             }]
                                         }).classes('w-full h-48')
 
-                                # 2. HISTORIAL Y DESCARGAS DESDE CLOUDINARY O LOCAL
+                                # 2. HISTORIAL Y DESCARGAS
                                 ui.label('📜 Historial de Trabajos e Intervenciones').classes('font-bold text-gray-700 mt-6 mb-2')
                                 
                                 with ui.card().classes('w-full p-2 max-h-96 overflow-y-auto'):
@@ -459,13 +491,13 @@ def main_page():
                                                 with ui.row().classes('items-center gap-2'):
                                                     ui.label(f"[{row.get('Estado', 'N/A')}]").classes(estado_color)
                                                     
-                                                    # Prioridad 1: Abrir Cloudinary si existe enlace (Nube garantizada)
+                                                    # Prioridad 1: Abrir Cloudinary si existe enlace
                                                     if url_cloudinary and str(url_cloudinary).startswith('http'):
                                                         ui.button(
                                                             '☁️ Abrir PDF', 
                                                             on_click=lambda u=url_cloudinary: ui.navigate.to(u, new_tab=True)
                                                         ).props('dense size=sm color=blue').classes('text-xs')
-                                                    # Prioridad 2: Descarga Local si el archivo aún existe en el servidor
+                                                    # Prioridad 2: Descarga Local si existe
                                                     elif archivo_encontrado:
                                                         ui.button(
                                                             '📥 PDF Local', 
