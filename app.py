@@ -1,8 +1,10 @@
 import os
 import io
+import json
 import subprocess
 import asyncio
 import shutil
+import re
 from datetime import datetime
 import pandas as pd
 import requests
@@ -23,9 +25,7 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
 
     try:
         if os.path.exists(ruta_archivo):
-            # Determinamos el tipo de recurso para Cloudinary
             is_pdf = ruta_archivo.lower().endswith('.pdf')
-            # Para los PDF usamos image/upload para que Cloudinary genere la vista web directa correctamente
             resource_type = "image" if is_pdf else "raw"
             endpoint_url = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/{resource_type}/upload"
             
@@ -66,21 +66,34 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
         return None, []
 
 # ==========================================
-# CONSTANTES Y ESTADO GLOBAL DE LA APP
+# CONSTANTES Y ESTADO PERSISTENTE DEL SISTEMA
 # ==========================================
 EXCEL_FILE = "registro_ordenes_servicio.xlsx"
 PLANTILLA_FILE = "plantilla_ot.docx"
+CONFIG_FILE = "config_sistema.json"
 TEMP_IMG_DIR = os.path.abspath("temp_images")
 
-SISTEMA_REINICIADO = False
-botones_reset_conectados = []
-
 os.makedirs(TEMP_IMG_DIR, exist_ok=True)
-
 app.add_static_files('/archivos_locales', '.')
 
+def leer_estado_reiniciado():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get('sistema_reiniciado', False)
+        except Exception:
+            return False
+    return False
+
+def guardar_estado_reiniciado(estado: bool):
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump({'sistema_reiniciado': estado}, f)
+    except Exception as e:
+        print(f"Error guardando configuración: {e}")
+
 AREAS = ["Papelote", "Caldera", "Expedición", "Químicos", "Mecánicos", "Km4"]
-# Se incluye la opción "Tercerizado"
 TECNICOS_OPCIONES = ["Ivan Sosa", "Néstor Medina", "Gerardo Maidana", "Cristian Alvarenga", "Tercerizado"]
 
 CAUSAS_OPCIONES = [
@@ -111,7 +124,6 @@ if not os.path.exists(EXCEL_FILE):
     crear_excel_vacio()
 
 def reiniciar_todo_el_sistema():
-    global SISTEMA_REINICIADO
     crear_excel_vacio()
     if os.path.exists(TEMP_IMG_DIR):
         shutil.rmtree(TEMP_IMG_DIR)
@@ -125,18 +137,26 @@ def reiniciar_todo_el_sistema():
             except Exception as e:
                 print(f"No se pudo eliminar {f}: {e}")
     
-    SISTEMA_REINICIADO = True
+    guardar_estado_reiniciado(True)
 
 def obtener_siguiente_ot():
+    """Calcula estrictamente el número de OT más alto guardado en el archivo Excel."""
     if os.path.exists(EXCEL_FILE):
         try:
-            df_ot = pd.read_excel(EXCEL_FILE, usecols=[0])
-            if not df_ot.empty:
-                numeros = df_ot.iloc[:, 0].astype(str).str.extract(r'(\d+)')[0].dropna().astype(int)
-                if not numeros.empty:
-                    return f"OT-{(numeros.max() + 1):05d}"
-        except Exception:
-            pass
+            df_ot = pd.read_excel(EXCEL_FILE)
+            if not df_ot.empty and "Num_OT" in df_ot.columns:
+                # Extraer números absolutos limpia y rigurosamente
+                numeros = []
+                for val in df_ot["Num_OT"].dropna():
+                    match = re.search(r'\d+', str(val))
+                    if match:
+                        numeros.append(int(match.group(0)))
+                
+                if numeros:
+                    max_num = max(numeros)
+                    return f"OT-{(max_num + 1):05d}"
+        except Exception as e:
+            print(f"Error calculando correlativo OT: {e}")
     return "OT-00001"
 
 def convertir_docx_a_pdf(ruta_docx, ruta_pdf):
@@ -227,6 +247,9 @@ def extraer_nombre_maquina(valor):
         return str(valor.get('label', valor.get('value', '')))
     return str(valor) if valor else ''
 
+# Referencia global de clientes para ocultar botón en tiempo real en sesiones activas
+botones_reset_instancias = []
+
 # ==========================================
 # INTERFAZ PRINCIPAL
 # ==========================================
@@ -254,20 +277,20 @@ def main_page():
         with ui.tab_panel(tab_cargar):
             ui.label('📋 Registro de Orden de Servicio').classes('text-2xl font-bold text-red-800 mb-2')
             
-            def aplicar_deshabilitacion_boton(btn):
-                btn.disable()
-                btn.props('color=grey')
-                btn.set_text('🔒 Historial Reiniciado (Desactivado Globalmente)')
-
+            # Ejecución del borrado/reseteo global
             def ejecutar_reset_general():
                 reiniciar_todo_el_sistema()
                 dialog_reset.close()
-                for b in botones_reset_conectados:
+                
+                # Ocultar inmediatamente el botón en todas las sesiones conectadas
+                for btn in botones_reset_instancias:
                     try:
-                        aplicar_deshabilitacion_boton(b)
+                        btn.set_visibility(False)
                     except Exception:
                         pass
-                ui.notify('🧹 El sistema ha sido reiniciado globalmente.', type='positive')
+                
+                in_num_ot.value = obtener_siguiente_ot()
+                ui.notify('🧹 El sistema ha sido reiniciado. Todos los dispositivos usarán la nueva secuencia.', type='positive')
 
             with ui.dialog() as dialog_reset, ui.card():
                 ui.label('⚠️ ¿Está seguro de borrar todo el historial?').classes('font-bold text-lg text-red-800')
@@ -277,10 +300,11 @@ def main_page():
                     ui.button('Sí, Borrar Todo', on_click=ejecutar_reset_general).props('color=red')
 
             btn_reset = ui.button('🗑️ Resetear Historial (Un Solo Uso)', on_click=dialog_reset.open).props('outline color=red size=sm').classes('mb-4')
-            botones_reset_conectados.append(btn_reset)
+            botones_reset_instancias.append(btn_reset)
 
-            if SISTEMA_REINICIADO:
-                aplicar_deshabilitacion_boton(btn_reset)
+            # Ocultar el botón si en la configuración del disco ya se registró un reseteo
+            if leer_estado_reiniciado():
+                btn_reset.set_visibility(False)
 
             with ui.card().classes('w-full p-4'):
                 with ui.grid(columns=2).classes('w-full gap-4'):
@@ -290,7 +314,7 @@ def main_page():
                     in_maquina = ui.select(list(MAQUINAS_DICT.keys()), label='Equipo / Máquina *')
                     in_horometro = ui.number('Horómetro', value=0.0, format='%.1f')
                     
-                    # Selección MÚLTIPLE para Técnicos
+                    # Seleccionador MÚLTIPLE de técnicos
                     in_tecnico = ui.select(TECNICOS_OPCIONES, multiple=True, label='Técnico(s) *').classes('w-full')
                     
                     in_tipo_mant = ui.select(['CORRECTIVO', 'PREVENTIVO', 'PREDICTIVO'], value='CORRECTIVO', label='Tipo Mantenimiento')
@@ -298,11 +322,10 @@ def main_page():
                     in_fecha_ini = ui.input('Fecha Inicial', value=datetime.now().strftime('%Y-%m-%d'))
                     in_fecha_ent = ui.input('Fecha Entrega', value=datetime.now().strftime('%Y-%m-%d'))
 
-                # Campo condicional para aclarar nombre de la empresa/persona tercerizada
+                # Detalle si se marca Tercerizado
                 in_tercerizado_detalle = ui.input('Nombre / Empresa Tercerizada *', placeholder='Ej: Taller Mecánico Central').classes('w-full mt-2')
                 in_tercerizado_detalle.set_visibility(False)
 
-                # Lógica para mostrar/ocultar el campo condicional de tercerizado
                 def evaluar_visibilidad_tercerizado(e=None):
                     seleccionados = in_tecnico.value or []
                     if "Tercerizado" in seleccionados:
@@ -367,18 +390,17 @@ def main_page():
                         ui.notify('⚠️ Complete los campos obligatorios (*)', type='warning')
                         return
 
-                    # Validación adicional si eligió Tercerizado
                     if "Tercerizado" in (in_tecnico.value or []) and not in_tercerizado_detalle.value.strip():
                         ui.notify('⚠️ Especifique el nombre o empresa del Tercerizado', type='warning')
                         return
 
-                    # Formatear la cadena de técnicos
                     tecnicos_lista = list(in_tecnico.value or [])
                     if "Tercerizado" in tecnicos_lista:
                         idx = tecnicos_lista.index("Tercerizado")
                         tecnicos_lista[idx] = f"Tercerizado ({in_tercerizado_detalle.value.strip()})"
                     tecnicos_str = ", ".join(tecnicos_lista)
 
+                    # Se calcula de forma exacta la OT inmediatamente antes de escribir en disco
                     num_ot_curr = obtener_siguiente_ot()
                     ui.notify(f'⏳ Procesando {num_ot_curr}... Generando PDF...', type='info')
 
@@ -431,12 +453,12 @@ def main_page():
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    # Descarga o apertura segura del archivo
                     if archivo_final and os.path.exists(archivo_final):
                         descargar_archivo_local(archivo_final)
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
 
+                    # Limpieza del formulario
                     in_descripcion.value = ''
                     in_materiales.value = ''
                     in_observaciones.value = ''
@@ -451,6 +473,7 @@ def main_page():
                                 pass
                     fotos_cargadas_temp.clear()
 
+                    # Actualiza en pantalla el nuevo correlativo listo para la siguiente OT
                     in_num_ot.value = obtener_siguiente_ot()
 
                 ui.button('💾 Guardar y Registrar Orden', on_click=procesar_guardado).classes('w-full bg-red-800 text-white font-bold my-4')
