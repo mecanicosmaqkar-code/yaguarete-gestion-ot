@@ -62,11 +62,16 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
         return None, []
 
 # ==========================================
-# CONSTANTES Y ARCHIVOS
+# CONSTANTES Y ESTADO GLOBAL DE LA APP
 # ==========================================
 EXCEL_FILE = "registro_ordenes_servicio.xlsx"
 PLANTILLA_FILE = "plantilla_ot.docx"
 TEMP_IMG_DIR = os.path.abspath("temp_images")
+
+# Variable global para rastrear el estado del botón en todos los dispositivos
+SISTEMA_REINICIADO = False
+# Lista global para actualizar los botones de todos los clientes conectados
+botones_reset_conectados = []
 
 os.makedirs(TEMP_IMG_DIR, exist_ok=True)
 
@@ -102,6 +107,7 @@ if not os.path.exists(EXCEL_FILE):
     crear_excel_vacio()
 
 def reiniciar_todo_el_sistema():
+    global SISTEMA_REINICIADO
     crear_excel_vacio()
     if os.path.exists(TEMP_IMG_DIR):
         shutil.rmtree(TEMP_IMG_DIR)
@@ -114,6 +120,8 @@ def reiniciar_todo_el_sistema():
                 os.remove(f)
             except Exception as e:
                 print(f"No se pudo eliminar {f}: {e}")
+    
+    SISTEMA_REINICIADO = True
 
 def obtener_siguiente_ot():
     if os.path.exists(EXCEL_FILE):
@@ -242,30 +250,43 @@ def main_page():
         with ui.tab_panel(tab_cargar):
             ui.label('📋 Registro de Orden de Servicio').classes('text-2xl font-bold text-red-800 mb-2')
             
-            # BOTÓN RESET DE UN SOLO USO
+            # Función para aplicar la deshabilitación visual al botón
+            def aplicar_deshabilitacion_boton(btn):
+                btn.disable()
+                btn.props('color=grey')
+                btn.set_text('🔒 Historial Reiniciado (Desactivado Globalmente)')
+
+            # Lógica para ejecutar el reinicio global
             def ejecutar_reset_general():
                 reiniciar_todo_el_sistema()
-                in_num_ot.value = "OT-00001"
                 dialog_reset.close()
                 
-                # Deshabilitar botón de reseteo para que sea de un solo uso
-                btn_reset.disable()
-                btn_reset.props('color=grey')
-                btn_reset.set_text('🔒 Historial Reiniciado (Botón Desactivado)')
+                # Deshabilitar el botón en TODOS los dispositivos conectados
+                for b in botones_reset_conectados:
+                    try:
+                        aplicar_deshabilitacion_boton(b)
+                    except Exception:
+                        pass
                 
-                ui.notify('🧹 Sistema limpiado con éxito. El botón de reinicio ha sido deshabilitado.', type='positive')
+                ui.notify('🧹 El sistema ha sido reiniciado globalmente.', type='positive')
 
             with ui.dialog() as dialog_reset, ui.card():
                 ui.label('⚠️ ¿Está seguro de borrar todo el historial?').classes('font-bold text-lg text-red-800')
-                ui.label('Esta acción borrará el archivo Excel de datos y los registros locales. Esta función es de UN SOLO USO.')
+                ui.label('Esta acción borrará el archivo Excel de datos y los registros locales. Se desactivará en TODOS los dispositivos.')
                 with ui.row().classes('w-full justify-end mt-4'):
                     ui.button('Cancelar', on_click=dialog_reset.close).props('flat')
                     ui.button('Sí, Borrar Todo', on_click=ejecutar_reset_general).props('color=red')
 
             btn_reset = ui.button('🗑️ Resetear Historial (Un Solo Uso)', on_click=dialog_reset.open).props('outline color=red size=sm').classes('mb-4')
+            botones_reset_conectados.append(btn_reset)
+
+            # Si el sistema ya fue reiniciado previamente, deshabilitar en este nuevo cliente
+            if SISTEMA_REINICIADO:
+                aplicar_deshabilitacion_boton(btn_reset)
 
             with ui.card().classes('w-full p-4'):
                 with ui.grid(columns=2).classes('w-full gap-4'):
+                    # Garantiza siempre obtener el correlativo actualizado desde el Excel
                     in_num_ot = ui.input('Número de OT', value=obtener_siguiente_ot()).props('readonly')
                     in_estado = ui.select(['FINALIZADO', 'PENDIENTE / A CONTINUAR'], value='FINALIZADO', label='Estado *')
                     in_area = ui.select(AREAS, label='Área *')
@@ -331,9 +352,11 @@ def main_page():
                         ui.notify('⚠️ Complete los campos obligatorios (*)', type='warning')
                         return
 
-                    ui.notify('⏳ Procesando fotos y generando PDF...', type='info')
+                    # Recalcular el número de OT justo antes de guardar para prevenir duplicados
+                    num_ot_curr = obtener_siguiente_ot()
 
-                    num_ot_curr = in_num_ot.value
+                    ui.notify(f'⏳ Procesando {num_ot_curr}... Generando PDF...', type='info')
+
                     codigo_m = MAQUINAS_DICT.get(in_maquina.value, "")
                     nombre_base = f"{in_tecnico.value}_{datetime.now().strftime('%Y-%m-%d')}_{in_maquina.value}_{num_ot_curr}".replace(" ", "_")
                     ruta_docx = f"{nombre_base}.docx"
@@ -401,6 +424,8 @@ def main_page():
                             except Exception:
                                 pass
                     fotos_cargadas_temp.clear()
+
+                    # Actualiza el campo de entrada en la pantalla actual con el nuevo correlativo
                     in_num_ot.value = obtener_siguiente_ot()
 
                 ui.button('💾 Guardar y Registrar Orden', on_click=procesar_guardado).classes('w-full bg-red-800 text-white font-bold my-4')
