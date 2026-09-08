@@ -2,6 +2,7 @@ import os
 import io
 import subprocess
 import asyncio
+import shutil
 from datetime import datetime
 import pandas as pd
 import requests
@@ -94,8 +95,25 @@ columnas_excel = [
     "Fecha_Inicial", "Hora_Final", "Fecha_Entrega", "Observaciones", "URL_Cloudinary"
 ]
 
-if not os.path.exists(EXCEL_FILE):
+def crear_excel_vacio():
     pd.DataFrame(columns=columnas_excel).to_excel(EXCEL_FILE, index=False)
+
+if not os.path.exists(EXCEL_FILE):
+    crear_excel_vacio()
+
+def reiniciar_todo_el_sistema():
+    crear_excel_vacio()
+    if os.path.exists(TEMP_IMG_DIR):
+        shutil.rmtree(TEMP_IMG_DIR)
+        os.makedirs(TEMP_IMG_DIR, exist_ok=True)
+
+    archivos = os.listdir('.')
+    for f in archivos:
+        if (f.endswith('.pdf') or f.endswith('.docx')) and f != PLANTILLA_FILE and 'OT-' in f:
+            try:
+                os.remove(f)
+            except Exception as e:
+                print(f"No se pudo eliminar {f}: {e}")
 
 def obtener_siguiente_ot():
     if os.path.exists(EXCEL_FILE):
@@ -113,10 +131,9 @@ def convertir_docx_a_pdf(ruta_docx, ruta_pdf):
     try:
         cmd = ["soffice", "--headless", "--convert-to", "pdf", ruta_docx]
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        print("✅ Conversión a PDF exitosa")
         return True
     except Exception as e:
-        print(f"⚠️ No se pudo convertir a PDF (¿LibreOffice no está instalado?): {e}")
+        print(f"⚠️ No se pudo convertir a PDF: {e}")
         return False
 
 def rellenar_plantilla(datos_dict, fotos_paths, ruta_salida_docx):
@@ -170,7 +187,7 @@ def descargar_archivo_local(nombre_archivo):
     if os.path.exists(nombre_archivo):
         ui.download(f'/archivos_locales/{nombre_archivo}')
     else:
-        ui.notify('⚠️ El archivo local ya no se encuentra en el servidor. Usa la copia de Cloudinary.', type='warning')
+        ui.notify('⚠️ El archivo local ya no se encuentra en el servidor.', type='warning')
 
 def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_pdf, num_ot_curr):
     fotos_optimizadas = []
@@ -194,7 +211,6 @@ def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_
     return archivo_final, url_doc_cloud
 
 def extraer_nombre_maquina(valor):
-    """Limpia el evento de selección para obtener la cadena del nombre sin formato de diccionario"""
     if isinstance(valor, dict):
         return str(valor.get('label', valor.get('value', '')))
     return str(valor) if valor else ''
@@ -224,8 +240,30 @@ def main_page():
         
         # TAB 1: CARGAR ORDEN
         with ui.tab_panel(tab_cargar):
-            ui.label('📋 Registro de Orden de Servicio').classes('text-2xl font-bold text-red-800 mb-4')
+            ui.label('📋 Registro de Orden de Servicio').classes('text-2xl font-bold text-red-800 mb-2')
             
+            # BOTÓN RESET DE UN SOLO USO
+            def ejecutar_reset_general():
+                reiniciar_todo_el_sistema()
+                in_num_ot.value = "OT-00001"
+                dialog_reset.close()
+                
+                # Deshabilitar botón de reseteo para que sea de un solo uso
+                btn_reset.disable()
+                btn_reset.props('color=grey')
+                btn_reset.set_text('🔒 Historial Reiniciado (Botón Desactivado)')
+                
+                ui.notify('🧹 Sistema limpiado con éxito. El botón de reinicio ha sido deshabilitado.', type='positive')
+
+            with ui.dialog() as dialog_reset, ui.card():
+                ui.label('⚠️ ¿Está seguro de borrar todo el historial?').classes('font-bold text-lg text-red-800')
+                ui.label('Esta acción borrará el archivo Excel de datos y los registros locales. Esta función es de UN SOLO USO.')
+                with ui.row().classes('w-full justify-end mt-4'):
+                    ui.button('Cancelar', on_click=dialog_reset.close).props('flat')
+                    ui.button('Sí, Borrar Todo', on_click=ejecutar_reset_general).props('color=red')
+
+            btn_reset = ui.button('🗑️ Resetear Historial (Un Solo Uso)', on_click=dialog_reset.open).props('outline color=red size=sm').classes('mb-4')
+
             with ui.card().classes('w-full p-4'):
                 with ui.grid(columns=2).classes('w-full gap-4'):
                     in_num_ot = ui.input('Número de OT', value=obtener_siguiente_ot()).props('readonly')
@@ -467,7 +505,6 @@ def main_page():
                                 finalizadas = len(df_filtrado[df_filtrado['Estado'] == 'FINALIZADO']) if 'Estado' in df_filtrado.columns else 0
                                 pendientes = len(df_filtrado[df_filtrado['Estado'] == 'PENDIENTE']) if 'Estado' in df_filtrado.columns else 0
 
-                                # MÉTIRICAS CLAVE
                                 with ui.grid(columns=3).classes('w-full gap-2 mb-4'):
                                     with ui.card().classes('p-3 text-center bg-gray-50'):
                                         ui.label('Total OT').classes('text-xs text-gray-600')
@@ -479,7 +516,6 @@ def main_page():
                                         ui.label('Pendientes').classes('text-xs text-gray-600')
                                         ui.label(str(pendientes)).classes('text-2xl font-bold text-yellow-700')
 
-                                # GRÁFICO DE FALLAS FRECUENTES
                                 if 'Causa_Falla' in df_filtrado.columns and not df_filtrado['Causa_Falla'].dropna().empty:
                                     causas_list = []
                                     for c in df_filtrado['Causa_Falla'].dropna():
@@ -501,7 +537,6 @@ def main_page():
                                             }]
                                         }).classes('w-full h-56')
 
-                                # TABLA ESTILO EXCEL COMPLETA
                                 ui.label('📋 Hoja de Registros Excel (Órdenes de la Máquina)').classes('font-bold text-gray-700 mt-6 mb-2')
                                 
                                 cols_tabla = [
@@ -523,7 +558,6 @@ def main_page():
                                     row_key='Num_OT'
                                 ).classes('w-full').props('dense flat bordered pagination="{rowsPerPage: 10}"')
 
-                                # DETALLE DE HISTORIAL CON LINK DE DESCARGA PDF
                                 ui.label('📜 Documentación y Archivos de Servicio').classes('font-bold text-gray-700 mt-6 mb-2')
                                 with ui.card().classes('w-full p-2 max-h-80 overflow-y-auto'):
                                     for _, row in df_filtrado.sort_values(by='Fecha_Registro', ascending=False).iterrows():
