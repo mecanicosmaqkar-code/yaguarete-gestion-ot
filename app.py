@@ -240,18 +240,39 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
-                # Manejo nativo exacto usando e.content.read()
-                def manejar_subida_nativas(e):
+                # Manejador de imágenes compatible con todas las versiones de NiceGUI
+                async def manejar_subida_nativas(e):
                     try:
                         filename = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
                         filepath = os.path.join(TEMP_IMG_DIR, filename)
                         
-                        contenido = e.content.read()
-                        with open(filepath, 'wb') as f:
-                            f.write(contenido)
-                            
+                        # 1. Intento por la API estándar (e.file)
+                        if hasattr(e, 'file') and e.file is not None:
+                            if hasattr(e.file, 'save'):
+                                await e.file.save(filepath)
+                            elif hasattr(e.file, 'read'):
+                                res = e.file.read()
+                                if asyncio.iscoroutine(res):
+                                    res = await res
+                                with open(filepath, 'wb') as f:
+                                    f.write(res)
+                        # 2. Intento por la API anterior (e.content)
+                        elif hasattr(e, 'content') and e.content is not None:
+                            if hasattr(e.content, 'read'):
+                                res = e.content.read()
+                                if asyncio.iscoroutine(res):
+                                    res = await res
+                                with open(filepath, 'wb') as f:
+                                    f.write(res)
+                            else:
+                                with open(filepath, 'wb') as f:
+                                    f.write(e.content)
+                        else:
+                            raise ValueError("No se pudo obtener el stream del archivo subido.")
+
                         fotos_cargadas_temp.append(filepath)
-                        ui.notify(f'📷 Foto guardada: {e.name}', type='positive')
+                        nombre_archivo = getattr(e, 'name', None) or getattr(getattr(e, 'file', None), 'name', 'archivo')
+                        ui.notify(f'📷 Foto guardada: {nombre_archivo}', type='positive')
                     except Exception as err:
                         print(f"Error procesando foto: {err}")
                         ui.notify(f'❌ Error al procesar: {err}', type='negative')
