@@ -193,6 +193,12 @@ def generar_documento_y_respaldar_sync(datos_docx, fotos_paths, ruta_docx, ruta_
     url_doc_cloud, _ = respaldar_trabajo_en_cloudinary(num_ot_curr, archivo_final, fotos_optimizadas)
     return archivo_final, url_doc_cloud
 
+def extraer_nombre_maquina(valor):
+    """Limpia el evento de selección para obtener la cadena del nombre sin formato de diccionario"""
+    if isinstance(valor, dict):
+        return str(valor.get('label', valor.get('value', '')))
+    return str(valor) if valor else ''
+
 # ==========================================
 # INTERFAZ PRINCIPAL
 # ==========================================
@@ -240,13 +246,11 @@ def main_page():
 
                 ui.label('📷 Adjuntar Fotografías del Servicio').classes('font-bold text-gray-700 mt-4')
                 
-                # Manejador de imágenes compatible con todas las versiones de NiceGUI
                 async def manejar_subida_nativas(e):
                     try:
                         filename = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
                         filepath = os.path.join(TEMP_IMG_DIR, filename)
                         
-                        # 1. Intento por la API estándar (e.file)
                         if hasattr(e, 'file') and e.file is not None:
                             if hasattr(e.file, 'save'):
                                 await e.file.save(filepath)
@@ -256,7 +260,6 @@ def main_page():
                                     res = await res
                                 with open(filepath, 'wb') as f:
                                     f.write(res)
-                        # 2. Intento por la API anterior (e.content)
                         elif hasattr(e, 'content') and e.content is not None:
                             if hasattr(e.content, 'read'):
                                 res = e.content.read()
@@ -406,7 +409,7 @@ def main_page():
             ui.button('🔄 Actualizar Lista', on_click=refrescar_historial).classes('mb-2')
             refrescar_historial()
 
-        # TAB 4: ESTADÍSTICAS
+        # TAB 4: ESTADÍSTICAS Y MÉTRICAS DETALLADAS
         with ui.tab_panel(tab_estadisticas):
             ui.label('📊 Panel de Estadísticas y Análisis de Mantenimiento').classes('text-2xl font-bold text-red-800 mb-4')
 
@@ -427,7 +430,9 @@ def main_page():
                         with ui.card().classes('w-full md:w-1/4 p-4 bg-gray-50'):
                             ui.label('🔍 Seleccionar Equipo').classes('font-bold text-lg text-gray-800 mb-2')
                             
-                            opciones_maquinas = ['TODAS LAS MÁQUINAS'] + sorted([str(m) for m in df['Maquina'].dropna().unique()])
+                            maquinas_unicas = sorted([str(m) for m in df['Maquina'].dropna().unique() if str(m).strip() != ''])
+                            opciones_maquinas = ['TODAS LAS MÁQUINAS'] + maquinas_unicas
+                            
                             sel_maquina = ui.select(
                                 opciones_maquinas, 
                                 value='TODAS LAS MÁQUINAS', 
@@ -436,31 +441,33 @@ def main_page():
 
                             ui.separator().classes('my-4')
                             ui.label('💡 Indicación:').classes('text-xs font-bold text-gray-500')
-                            ui.label('Selecciona una máquina para ver sus métricas y descargar los PDF asociados.').classes('text-xs text-gray-500')
+                            ui.label('Selecciona una máquina específica para consultar su hoja de datos Excel y análisis de fallas.').classes('text-xs text-gray-500')
 
                         contenido_central = ui.column().classes('w-full md:w-3/4')
 
-                        def actualizar_contenido_central(maq_seleccionada):
+                        def actualizar_contenido_central(evento_val):
+                            nombre_maquina = extraer_nombre_maquina(evento_val)
                             contenido_central.clear()
                             
-                            if maq_seleccionada == 'TODAS LAS MÁQUINAS':
+                            if nombre_maquina == 'TODAS LAS MÁQUINAS' or not nombre_maquina:
                                 df_filtrado = df.copy()
                                 titulo_seccion = "Resumen General de la Flota"
                             else:
-                                df_filtrado = df[df['Maquina'] == maq_seleccionada]
-                                titulo_seccion = f"Análisis y Diagnóstico: {maq_seleccionada}"
+                                df_filtrado = df[df['Maquina'].astype(str) == nombre_maquina]
+                                titulo_seccion = f"Análisis y Diagnóstico: {nombre_maquina}"
 
                             with contenido_central:
                                 ui.label(titulo_seccion).classes('text-xl font-bold text-red-800 mb-2')
 
                                 if df_filtrado.empty:
-                                    ui.label('No hay registros disponibles para la selección.').classes('text-gray-500 my-4')
+                                    ui.label('No hay registros disponibles para la máquina seleccionada.').classes('text-gray-500 my-4')
                                     return
 
                                 total_ot = len(df_filtrado)
                                 finalizadas = len(df_filtrado[df_filtrado['Estado'] == 'FINALIZADO']) if 'Estado' in df_filtrado.columns else 0
                                 pendientes = len(df_filtrado[df_filtrado['Estado'] == 'PENDIENTE']) if 'Estado' in df_filtrado.columns else 0
 
+                                # MÉTIRICAS CLAVE
                                 with ui.grid(columns=3).classes('w-full gap-2 mb-4'):
                                     with ui.card().classes('p-3 text-center bg-gray-50'):
                                         ui.label('Total OT').classes('text-xs text-gray-600')
@@ -472,28 +479,53 @@ def main_page():
                                         ui.label('Pendientes').classes('text-xs text-gray-600')
                                         ui.label(str(pendientes)).classes('text-2xl font-bold text-yellow-700')
 
+                                # GRÁFICO DE FALLAS FRECUENTES
                                 if 'Causa_Falla' in df_filtrado.columns and not df_filtrado['Causa_Falla'].dropna().empty:
                                     causas_list = []
                                     for c in df_filtrado['Causa_Falla'].dropna():
-                                        causas_list.extend([x.strip() for x in str(c).split(',') if x.strip() != 'N/A'])
+                                        causas_list.extend([x.strip() for x in str(c).split(',') if x.strip() not in ['N/A', '']])
                                     
                                     if causas_list:
                                         causas_series = pd.Series(causas_list).value_counts().head(5)
-                                        ui.label('🚨 Fallas y Causas Más Comunes').classes('font-bold text-gray-700 mt-2')
+                                        ui.label('🚨 Gráfico: Fallas y Problemas Más Frecuentes').classes('font-bold text-gray-700 mt-2')
                                         ui.echart({
                                             'tooltip': {'trigger': 'axis'},
+                                            'grid': {'left': '3%', 'right': '4%', 'bottom': '3%', 'containLabel': True},
                                             'xAxis': {'type': 'value'},
                                             'yAxis': {'type': 'category', 'data': [str(k) for k in causas_series.index[::-1]]},
                                             'series': [{
+                                                'name': 'Frecuencia',
                                                 'data': [int(v) for v in causas_series.values[::-1]],
                                                 'type': 'bar',
                                                 'itemStyle': {'color': '#A61C1C'}
                                             }]
-                                        }).classes('w-full h-48')
+                                        }).classes('w-full h-56')
 
-                                ui.label('📜 Historial de Trabajos e Intervenciones').classes('font-bold text-gray-700 mt-6 mb-2')
+                                # TABLA ESTILO EXCEL COMPLETA
+                                ui.label('📋 Hoja de Registros Excel (Órdenes de la Máquina)').classes('font-bold text-gray-700 mt-6 mb-2')
                                 
-                                with ui.card().classes('w-full p-2 max-h-96 overflow-y-auto'):
+                                cols_tabla = [
+                                    {'name': 'Num_OT', 'label': 'OT', 'field': 'Num_OT', 'required': True, 'align': 'left'},
+                                    {'name': 'Fecha_Registro', 'label': 'Fecha', 'field': 'Fecha_Registro', 'align': 'left'},
+                                    {'name': 'Estado', 'label': 'Estado', 'field': 'Estado', 'align': 'center'},
+                                    {'name': 'Maquina', 'label': 'Equipo', 'field': 'Maquina', 'align': 'left'},
+                                    {'name': 'Tecnico_Inicial', 'label': 'Técnico', 'field': 'Tecnico_Inicial', 'align': 'left'},
+                                    {'name': 'Causa_Falla', 'label': 'Falla / Causa', 'field': 'Causa_Falla', 'align': 'left'},
+                                    {'name': 'Descripcion', 'label': 'Descripción Problema', 'field': 'Descripcion', 'align': 'left'},
+                                    {'name': 'Materiales', 'label': 'Materiales', 'field': 'Materiales', 'align': 'left'},
+                                ]
+
+                                rows_tabla = df_filtrado.fillna('N/A').to_dict('records')
+
+                                ui.table(
+                                    columns=cols_tabla, 
+                                    rows=rows_tabla, 
+                                    row_key='Num_OT'
+                                ).classes('w-full').props('dense flat bordered pagination="{rowsPerPage: 10}"')
+
+                                # DETALLE DE HISTORIAL CON LINK DE DESCARGA PDF
+                                ui.label('📜 Documentación y Archivos de Servicio').classes('font-bold text-gray-700 mt-6 mb-2')
+                                with ui.card().classes('w-full p-2 max-h-80 overflow-y-auto'):
                                     for _, row in df_filtrado.sort_values(by='Fecha_Registro', ascending=False).iterrows():
                                         num_ot_val = str(row.get('Num_OT', ''))
                                         archivo_encontrado = buscar_archivo_ot(num_ot_val)
@@ -517,14 +549,12 @@ def main_page():
                                                             '📥 PDF Local', 
                                                             on_click=lambda a=archivo_encontrado: descargar_archivo_local(a)
                                                         ).props('dense size=sm color=red').classes('text-xs')
-                                                    else:
-                                                        ui.label('Sin PDF').classes('text-xs text-gray-400')
 
-                                            ui.label(f"🔧 Máquina: {row.get('Maquina', 'N/A')} | Técnico: {row.get('Tecnico_Inicial', 'N/A')} | Horómetro: {row.get('Horometro', 0)}")
-                                            ui.label(f"📝 Servicio: {row.get('Descripcion', 'Sin descripción')}")
+                                            ui.label(f"🔧 Máquina: {row.get('Maquina', 'N/A')} | Causa: {row.get('Causa_Falla', 'N/A')}")
+                                            ui.label(f"📝 Problema: {row.get('Descripcion', 'Sin descripción')}")
 
                         sel_maquina.on('update:model-value', lambda e: actualizar_contenido_central(e.args))
-                        actualizar_contenido_central('TODAS LAS MÁQUINAS')
+                        actualizar_contenido_central(sel_maquina.value)
 
             container_stats = ui.column().classes('w-full')
             ui.button('🔄 Refrescar Datos', on_click=renderizar_estadisticas).classes('mb-4 bg-red-800 text-white')
