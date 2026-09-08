@@ -23,7 +23,11 @@ def respaldar_trabajo_en_cloudinary(num_ot, ruta_archivo, fotos_subidas=None):
 
     try:
         if os.path.exists(ruta_archivo):
-            endpoint_url = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/raw/upload"
+            # Determinamos el tipo de recurso para Cloudinary
+            is_pdf = ruta_archivo.lower().endswith('.pdf')
+            # Para los PDF usamos image/upload para que Cloudinary genere la vista web directa correctamente
+            resource_type = "image" if is_pdf else "raw"
+            endpoint_url = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/{resource_type}/upload"
             
             with open(ruta_archivo, "rb") as file_to_upload:
                 payload = {
@@ -68,9 +72,7 @@ EXCEL_FILE = "registro_ordenes_servicio.xlsx"
 PLANTILLA_FILE = "plantilla_ot.docx"
 TEMP_IMG_DIR = os.path.abspath("temp_images")
 
-# Variable global para rastrear el estado del botón en todos los dispositivos
 SISTEMA_REINICIADO = False
-# Lista global para actualizar los botones de todos los clientes conectados
 botones_reset_conectados = []
 
 os.makedirs(TEMP_IMG_DIR, exist_ok=True)
@@ -78,7 +80,9 @@ os.makedirs(TEMP_IMG_DIR, exist_ok=True)
 app.add_static_files('/archivos_locales', '.')
 
 AREAS = ["Papelote", "Caldera", "Expedición", "Químicos", "Mecánicos", "Km4"]
-TECNICOS_OPCIONES = ["Ivan Sosa", "Néstor Medina", "Gerardo Maidana", "Cristian Alvarenga"]
+# Se incluye la opción "Tercerizado"
+TECNICOS_OPCIONES = ["Ivan Sosa", "Néstor Medina", "Gerardo Maidana", "Cristian Alvarenga", "Tercerizado"]
+
 CAUSAS_OPCIONES = [
     "Desgaste natural", "Falta de lubricación", "Error operacional / manipulación", 
     "Sobrecalentamiento", "Fuga hidráulica/neumática", "Falla eléctrica/cortocircuito", 
@@ -250,24 +254,19 @@ def main_page():
         with ui.tab_panel(tab_cargar):
             ui.label('📋 Registro de Orden de Servicio').classes('text-2xl font-bold text-red-800 mb-2')
             
-            # Función para aplicar la deshabilitación visual al botón
             def aplicar_deshabilitacion_boton(btn):
                 btn.disable()
                 btn.props('color=grey')
                 btn.set_text('🔒 Historial Reiniciado (Desactivado Globalmente)')
 
-            # Lógica para ejecutar el reinicio global
             def ejecutar_reset_general():
                 reiniciar_todo_el_sistema()
                 dialog_reset.close()
-                
-                # Deshabilitar el botón en TODOS los dispositivos conectados
                 for b in botones_reset_conectados:
                     try:
                         aplicar_deshabilitacion_boton(b)
                     except Exception:
                         pass
-                
                 ui.notify('🧹 El sistema ha sido reiniciado globalmente.', type='positive')
 
             with ui.dialog() as dialog_reset, ui.card():
@@ -280,23 +279,39 @@ def main_page():
             btn_reset = ui.button('🗑️ Resetear Historial (Un Solo Uso)', on_click=dialog_reset.open).props('outline color=red size=sm').classes('mb-4')
             botones_reset_conectados.append(btn_reset)
 
-            # Si el sistema ya fue reiniciado previamente, deshabilitar en este nuevo cliente
             if SISTEMA_REINICIADO:
                 aplicar_deshabilitacion_boton(btn_reset)
 
             with ui.card().classes('w-full p-4'):
                 with ui.grid(columns=2).classes('w-full gap-4'):
-                    # Garantiza siempre obtener el correlativo actualizado desde el Excel
                     in_num_ot = ui.input('Número de OT', value=obtener_siguiente_ot()).props('readonly')
                     in_estado = ui.select(['FINALIZADO', 'PENDIENTE / A CONTINUAR'], value='FINALIZADO', label='Estado *')
                     in_area = ui.select(AREAS, label='Área *')
                     in_maquina = ui.select(list(MAQUINAS_DICT.keys()), label='Equipo / Máquina *')
                     in_horometro = ui.number('Horómetro', value=0.0, format='%.1f')
-                    in_tecnico = ui.select(TECNICOS_OPCIONES, label='Técnico *')
+                    
+                    # Selección MÚLTIPLE para Técnicos
+                    in_tecnico = ui.select(TECNICOS_OPCIONES, multiple=True, label='Técnico(s) *').classes('w-full')
+                    
                     in_tipo_mant = ui.select(['CORRECTIVO', 'PREVENTIVO', 'PREDICTIVO'], value='CORRECTIVO', label='Tipo Mantenimiento')
                     in_prioridad = ui.select(['ALTA', 'MEDIA', 'BAJA'], value='MEDIA', label='Prioridad *')
                     in_fecha_ini = ui.input('Fecha Inicial', value=datetime.now().strftime('%Y-%m-%d'))
                     in_fecha_ent = ui.input('Fecha Entrega', value=datetime.now().strftime('%Y-%m-%d'))
+
+                # Campo condicional para aclarar nombre de la empresa/persona tercerizada
+                in_tercerizado_detalle = ui.input('Nombre / Empresa Tercerizada *', placeholder='Ej: Taller Mecánico Central').classes('w-full mt-2')
+                in_tercerizado_detalle.set_visibility(False)
+
+                # Lógica para mostrar/ocultar el campo condicional de tercerizado
+                def evaluar_visibilidad_tercerizado(e=None):
+                    seleccionados = in_tecnico.value or []
+                    if "Tercerizado" in seleccionados:
+                        in_tercerizado_detalle.set_visibility(True)
+                    else:
+                        in_tercerizado_detalle.set_visibility(False)
+                        in_tercerizado_detalle.value = ''
+
+                in_tecnico.on('update:model-value', evaluar_visibilidad_tercerizado)
 
                 in_descripcion = ui.textarea('Descripción del Servicio / Diagnóstico').classes('w-full mt-2')
                 in_causas = ui.select(CAUSAS_OPCIONES, multiple=True, label='Causas Estándar').classes('w-full mt-2')
@@ -352,13 +367,23 @@ def main_page():
                         ui.notify('⚠️ Complete los campos obligatorios (*)', type='warning')
                         return
 
-                    # Recalcular el número de OT justo antes de guardar para prevenir duplicados
-                    num_ot_curr = obtener_siguiente_ot()
+                    # Validación adicional si eligió Tercerizado
+                    if "Tercerizado" in (in_tecnico.value or []) and not in_tercerizado_detalle.value.strip():
+                        ui.notify('⚠️ Especifique el nombre o empresa del Tercerizado', type='warning')
+                        return
 
+                    # Formatear la cadena de técnicos
+                    tecnicos_lista = list(in_tecnico.value or [])
+                    if "Tercerizado" in tecnicos_lista:
+                        idx = tecnicos_lista.index("Tercerizado")
+                        tecnicos_lista[idx] = f"Tercerizado ({in_tercerizado_detalle.value.strip()})"
+                    tecnicos_str = ", ".join(tecnicos_lista)
+
+                    num_ot_curr = obtener_siguiente_ot()
                     ui.notify(f'⏳ Procesando {num_ot_curr}... Generando PDF...', type='info')
 
                     codigo_m = MAQUINAS_DICT.get(in_maquina.value, "")
-                    nombre_base = f"{in_tecnico.value}_{datetime.now().strftime('%Y-%m-%d')}_{in_maquina.value}_{num_ot_curr}".replace(" ", "_")
+                    nombre_base = f"OT_{num_ot_curr}_{in_maquina.value}".replace(" ", "_")
                     ruta_docx = f"{nombre_base}.docx"
                     ruta_pdf = f"{nombre_base}.pdf"
 
@@ -366,7 +391,7 @@ def main_page():
 
                     datos_docx = {
                         "area": in_area.value, "códigomaq": codigo_m, "Maquina": in_maquina.value,
-                        "horometro": in_horometro.value, "tecnico": in_tecnico.value, "numOT": num_ot_curr,
+                        "horometro": in_horometro.value, "tecnico": tecnicos_str, "numOT": num_ot_curr,
                         "descripcion_del_servicio": f"[{in_estado.value}] {in_descripcion.value}",
                         "tipo_mantenimiento": in_tipo_mant.value, "prioridad": in_prioridad.value,
                         "causa_falla": causa_str, "Materiales": in_materiales.value,
@@ -393,7 +418,7 @@ def main_page():
                         "Codigo_Maq": codigo_m, 
                         "Maquina": in_maquina.value,
                         "Horometro": in_horometro.value, 
-                        "Tecnico_Inicial": in_tecnico.value,
+                        "Tecnico_Inicial": tecnicos_str,
                         "Descripcion": in_descripcion.value, 
                         "Tipo_Mantenimiento": in_tipo_mant.value,
                         "Prioridad": in_prioridad.value, 
@@ -406,9 +431,8 @@ def main_page():
                     }
                     pd.concat([df_ex, pd.DataFrame([nueva_fila])], ignore_index=True).to_excel(EXCEL_FILE, index=False)
 
-                    if url_doc_cloud:
-                        ui.navigate.to(url_doc_cloud, new_tab=True)
-                    elif os.path.exists(archivo_final):
+                    # Descarga o apertura segura del archivo
+                    if archivo_final and os.path.exists(archivo_final):
                         descargar_archivo_local(archivo_final)
 
                     ui.notify(f'✅ Orden {num_ot_curr} guardada correctamente', type='positive')
@@ -416,6 +440,8 @@ def main_page():
                     in_descripcion.value = ''
                     in_materiales.value = ''
                     in_observaciones.value = ''
+                    in_tercerizado_detalle.value = ''
+                    in_tercerizado_detalle.set_visibility(False)
                     
                     for p in fotos_cargadas_temp:
                         if os.path.exists(p):
@@ -425,7 +451,6 @@ def main_page():
                                 pass
                     fotos_cargadas_temp.clear()
 
-                    # Actualiza el campo de entrada en la pantalla actual con el nuevo correlativo
                     in_num_ot.value = obtener_siguiente_ot()
 
                 ui.button('💾 Guardar y Registrar Orden', on_click=procesar_guardado).classes('w-full bg-red-800 text-white font-bold my-4')
@@ -443,7 +468,7 @@ def main_page():
                     if not df_pend.empty:
                         for _, row in df_pend.iterrows():
                             with ui.card().classes('w-full mb-2 p-3'):
-                                ui.label(f"📌 OT: {row['Num_OT']} | Equipo: {row['Maquina']} | Técnico: {row['Tecnico_Inicial']}").classes('font-bold')
+                                ui.label(f"📌 OT: {row['Num_OT']} | Equipo: {row['Maquina']} | Técnico(s): {row['Tecnico_Inicial']}").classes('font-bold')
                                 ui.label(f"Descripción: {row['Descripcion']}")
                     else:
                         ui.label('ℹ️ No hay trabajos pendientes registrados.').classes('text-gray-500')
@@ -569,7 +594,7 @@ def main_page():
                                     {'name': 'Fecha_Registro', 'label': 'Fecha', 'field': 'Fecha_Registro', 'align': 'left'},
                                     {'name': 'Estado', 'label': 'Estado', 'field': 'Estado', 'align': 'center'},
                                     {'name': 'Maquina', 'label': 'Equipo', 'field': 'Maquina', 'align': 'left'},
-                                    {'name': 'Tecnico_Inicial', 'label': 'Técnico', 'field': 'Tecnico_Inicial', 'align': 'left'},
+                                    {'name': 'Tecnico_Inicial', 'label': 'Técnico(s)', 'field': 'Tecnico_Inicial', 'align': 'left'},
                                     {'name': 'Causa_Falla', 'label': 'Falla / Causa', 'field': 'Causa_Falla', 'align': 'left'},
                                     {'name': 'Descripcion', 'label': 'Descripción Problema', 'field': 'Descripcion', 'align': 'left'},
                                     {'name': 'Materiales', 'label': 'Materiales', 'field': 'Materiales', 'align': 'left'},
@@ -610,6 +635,7 @@ def main_page():
                                                         ).props('dense size=sm color=red').classes('text-xs')
 
                                             ui.label(f"🔧 Máquina: {row.get('Maquina', 'N/A')} | Causa: {row.get('Causa_Falla', 'N/A')}")
+                                            ui.label(f"👨‍🔧 Técnico(s): {row.get('Tecnico_Inicial', 'N/A')}")
                                             ui.label(f"📝 Problema: {row.get('Descripcion', 'Sin descripción')}")
 
                         sel_maquina.on('update:model-value', lambda e: actualizar_contenido_central(e.args))
